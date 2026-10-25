@@ -38,7 +38,7 @@
                             <menuItem title="Info su nvALT" id="58">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
-                                    <action selector="orderFrontStandardAboutPanel:" target="-2" id="1254"/>
+                                    <action selector="showAboutPanel:" target="213" id="1254"/>
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="196">
@@ -1025,7 +1025,7 @@ CA
                 <menuItem title="Info su nvALT" id="GjD-30-xrx">
                     <modifierMask key="keyEquivalentModifierMask"/>
                     <connections>
-                        <action selector="orderFrontStandardAboutPanel:" target="-2" id="CbG-uz-KFF"/>
+                        <action selector="showAboutPanel:" target="213" id="CbG-uz-KFF"/>
                     </connections>
                 </menuItem>
                 <menuItem title="Preferenze…" keyEquivalent="," id="1180">

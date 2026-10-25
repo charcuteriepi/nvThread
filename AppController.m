@@ -2235,6 +2235,10 @@ terminateApp:
 	[super dealloc];
 }
 
+- (IBAction)showAboutPanel:(id)sender {
+	[NSApp orderFrontStandardAboutPanelWithOptions:@{NSAboutPanelOptionApplicationName: @"nvThread"}];
+}
+
 - (IBAction)showPreferencesWindow:(id)sender {
 	[prefsWindowController showWindow:sender];
 }
