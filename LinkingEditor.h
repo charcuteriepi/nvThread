@@ -30,13 +30,25 @@
 	
 	GlobalPrefs *prefsController;
 	BOOL didRenderFully;
+	BOOL markdownHighlightSuppressed;
+	BOOL markdownHighlightCoversAll;
+	NSRange markdownHighlightDirty;
+	NSRange markdownHighlightLimit;
+	NSRange plainForegroundDirty;
 	
 	BOOL didChangeIntoAutomaticRange;
+	BOOL renumberingNumberedLists;
+	BOOL markdownAdjustingSelection;
+	NSInteger markdownSelectionLevel;
+	NSUInteger markdownSelectionAnchor;
 	NSRange lastAutomaticallySelectedRange;
+	NSUInteger automaticFirstVisibleCharIndex;
+	BOOL selectionScrollSuppressed;
 	NSRange changedRange;
-	BOOL isAutocompleting, wasDeleting;
+	BOOL isAutocompleting, wasDeleting, completionSelectionColored;
+	NSRange completionColoredRange;
 	
-	BOOL backgroundIsDark, mouseInside;
+	BOOL backgroundIsDark, mouseInside, expandingDisplayRect;
 	
 	//ludicrous ivars used to hack NSTextFinder. just write your own, damnit!
 	NSRange selectedRangeDuringFind;
@@ -46,7 +58,8 @@
 	
 	IMP defaultIBeamCursorIMP, whiteIBeamCursorIMP;
     
-    BOOL managesTextWidth;
+	BOOL managesTextWidth;
+	BOOL matchingMinHeight;
 	NSString *beforeString;
 	NSString *afterString;
     NSString *activeParagraph;
@@ -70,9 +83,15 @@
 - (NSDictionary*)preferredLinkAttributes;
 - (NSRange)selectedRangeWasAutomatic:(BOOL*)automatic;
 - (void)setAutomaticallySelectedRange:(NSRange)newRange;
+- (NSUInteger)firstVisibleCharIndexWasAutomatic:(BOOL*)automatic;
+- (void)markScrollPositionAutomatic;
 - (void)removeHighlightedTerms;
+- (void)removeSearchTermHighlights;
+- (void)discardSearchHighlights;
 - (void)highlightRangesTemporarily:(CFArrayRef)ranges;
 - (NSRange)highlightTermsTemporarilyReturningFirstRange:(NSString*)typedString avoidHighlight:(BOOL)noHighlight;
+- (NSArray*)highlightTermsTemporarily:(NSString*)typedString avoidHighlight:(BOOL)noHighlight;
+- (NSArray*)rangesOfSearchTerms:(NSString*)typedString;
 - (void)defaultStyle:(id)sender;
 - (void)strikethroughNV:(id)sender;
 - (void)bold:(id)sender;
@@ -92,6 +111,7 @@
 - (void)setupFontMenu;
 
 - (BOOL)didRenderFully;
+- (void)redisplayAfterNoteChange;
 
 #pragma mark - nvALT additions
 - (void)setMouseInside:(BOOL)inside;

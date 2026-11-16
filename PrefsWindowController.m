@@ -22,12 +22,16 @@
 #import "NotationPrefs.h"
 #import "GlobalPrefs.h"
 #import "BufferUtils.h"
+#import "NVThemeManager.h"
 
 @interface PrefsWindowController () <NSTableViewDataSource, NSTableViewDelegate>
 {
 	NSTableView *sidebarTable;
 	NSView *detailView;
 	NSArray *settingsPanes;
+	NSView *debugView;
+	NSButton *logErrorsAndWarningsButton;
+	NSButton *logAllDiagnosticMessagesButton;
 }
 @end
 
@@ -42,7 +46,9 @@
 		[prefsController registerWithTarget:self forChangesInSettings:
 		 @selector(resolveNoteBodyFontFromNotationPrefsFromSender:), 
 //		 @selector(setCheckSpellingAsYouType:sender:), 
-		 @selector(setConfirmNoteDeletion:sender:), nil];
+		 @selector(setConfirmNoteDeletion:sender:),
+		 @selector(setLogsErrorsAndWarnings:sender:),
+		 @selector(setLogsAllDiagnosticMessages:sender:), nil];
     }
     return self;
 }
@@ -50,7 +56,7 @@
 - (void)showWindow:(id)sender {
 	if (!window) {
 		if (![NSBundle loadNibNamed:@"Preferences" owner:self])  {
-			NSLog(@"Failed to load Preferences.nib");
+			NVLogError(@"Failed to load Preferences.nib");
 			return;
 		}
 	}
@@ -81,7 +87,7 @@
 }
 
 - (void)menuNeedsUpdate:(NSMenu *)menu {
-	NSLog(@"I need an update: %@", [menu description]);
+	NVLogInfo(@"I need an update: %@", [menu description]);
 }
 
 - (IBAction)setAppShortcut:(id)sender {
@@ -96,7 +102,7 @@
 		
 	if (![prefsController registerAppActivationKeystrokeWithTarget:[NSApp delegate] selector:@selector(toggleNVActivation:)]) {
 		[prefsController setAppActivationKeyCombo:oldKeyCombo sender:self];
-		NSLog(@"reverting to old (hopefully working key combo");
+		NVLogWarning(@"reverting to old (hopefully working key combo");
 	}
 	
 	[oldKeyCombo release];
@@ -270,8 +276,345 @@
 	}
 }
 
-- (IBAction)changedUseETScrollbarsOnLion:(id)sender{
-    [prefsController setUseETScrollbarsOnLion:[useETScrollbarsOnLionButton state] sender:self];
+- (NSTextField *)themeLabelWithFrame:(NSRect)frame title:(NSString *)title {
+	NSTextField *label = [[NSTextField alloc] initWithFrame:frame];
+	[label setEditable:NO];
+	[label setSelectable:NO];
+	[label setBezeled:NO];
+	[label setDrawsBackground:NO];
+	[label setAlignment:NSTextAlignmentRight];
+	[label setFont:[NSFont systemFontOfSize:[NSFont systemFontSize]]];
+	[label setStringValue:title];
+	[label setAutoresizingMask:NSViewMaxYMargin | NSViewMaxXMargin];
+	return label;
+}
+
+- (void)fillThemePopup:(NSPopUpButton *)popup filenames:(NSArray *)filenames selected:(NSString *)selected {
+	[popup removeAllItems];
+	NSMenuItem *fallback = [[popup menu] addItemWithTitle:NSLocalizedString(@"Default", @"built-in editor or preview theme") action:NULL keyEquivalent:@""];
+	[fallback setRepresentedObject:@""];
+	if ([filenames count])
+		[[popup menu] addItem:[NSMenuItem separatorItem]];
+	NSInteger selectedIndex = 0;
+	for (NSString *filename in filenames) {
+		NSString *title = [filename stringByDeletingPathExtension];
+		if ([popup itemWithTitle:title])
+			title = filename;
+		NSMenuItem *item = [[popup menu] addItemWithTitle:title action:NULL keyEquivalent:@""];
+		[item setRepresentedObject:filename];
+		if ([filename isEqualToString:selected])
+			selectedIndex = [popup indexOfItem:item];
+	}
+	[popup selectItemAtIndex:selectedIndex];
+}
+
+- (void)reloadThemePopups {
+	NVThemeManager *themes = [NVThemeManager sharedManager];
+	NSPopUpButton *editorPopup = (NSPopUpButton *)[fontsColorsView viewWithTag:7310];
+	NSPopUpButton *previewPopup = (NSPopUpButton *)[fontsColorsView viewWithTag:7311];
+	if ([editorPopup isKindOfClass:[NSPopUpButton class]])
+		[self fillThemePopup:editorPopup filenames:[themes editorThemeFilenames] selected:[themes editorThemeFilename]];
+	if ([previewPopup isKindOfClass:[NSPopUpButton class]])
+		[self fillThemePopup:previewPopup filenames:[themes previewThemeFilenames] selected:[themes previewThemeFilename]];
+}
+
+- (void)themesDidChange:(NSNotification *)note {
+	[self performSelector:@selector(reloadThemePopups) withObject:nil afterDelay:0];
+}
+
+- (void)addThemeControls {
+	if (!fontsColorsView || [fontsColorsView viewWithTag:7310])
+		return;
+	CGFloat extra = 128.0;
+	NSArray *subviews = [[fontsColorsView subviews] copy];
+	NSMutableArray *savedMasks = [[NSMutableArray alloc] initWithCapacity:[subviews count]];
+	for (NSView *subview in subviews) {
+		[savedMasks addObject:[NSNumber numberWithUnsignedInteger:[subview autoresizingMask]]];
+		[subview setAutoresizingMask:NSViewNotSizable];
+	}
+	for (NSView *subview in subviews) {
+		NSRect frame = [subview frame];
+		frame.origin.y += extra;
+		[subview setFrame:frame];
+	}
+	NSRect viewFrame = [fontsColorsView frame];
+	viewFrame.size.height += extra;
+	[fontsColorsView setFrame:viewFrame];
+	NSUInteger maskIndex = 0;
+	for (NSView *subview in subviews)
+		[subview setAutoresizingMask:[[savedMasks objectAtIndex:maskIndex++] unsignedIntegerValue]];
+	[savedMasks release];
+	[subviews release];
+
+	NSTextField *heading = [self themeLabelWithFrame:NSMakeRect(18, 100, 220, 18) title:NSLocalizedString(@"Themes", @"Fonts and Colors theme section")];
+	[heading setAlignment:NSTextAlignmentLeft];
+	[heading setFont:[NSFont boldSystemFontOfSize:[NSFont systemFontSize]]];
+	[fontsColorsView addSubview:heading];
+	[heading release];
+
+	NSTextField *editorLabel = [self themeLabelWithFrame:NSMakeRect(8, 70, 112, 17) title:NSLocalizedString(@"Editor Theme:", @"editor theme popup label")];
+	[fontsColorsView addSubview:editorLabel];
+	[editorLabel release];
+	NSPopUpButton *editorPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(124, 64, 280, 26) pullsDown:NO];
+	[editorPopup setTag:7310];
+	[editorPopup setTarget:self];
+	[editorPopup setAction:@selector(changedEditorTheme:)];
+	[editorPopup setAutoresizingMask:NSViewMaxYMargin | NSViewWidthSizable];
+	[fontsColorsView addSubview:editorPopup];
+	[editorPopup release];
+
+	NSTextField *previewLabel = [self themeLabelWithFrame:NSMakeRect(8, 38, 112, 17) title:NSLocalizedString(@"Preview Theme:", @"preview theme popup label")];
+	[fontsColorsView addSubview:previewLabel];
+	[previewLabel release];
+	NSPopUpButton *previewPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(124, 32, 280, 26) pullsDown:NO];
+	[previewPopup setTag:7311];
+	[previewPopup setTarget:self];
+	[previewPopup setAction:@selector(changedPreviewTheme:)];
+	[previewPopup setAutoresizingMask:NSViewMaxYMargin | NSViewWidthSizable];
+	[fontsColorsView addSubview:previewPopup];
+	[previewPopup release];
+
+	NSButton *importButton = [[NSButton alloc] initWithFrame:NSMakeRect(124, 2, 90, 24)];
+	[importButton setButtonType:NSButtonTypeMomentaryPushIn];
+	[importButton setBezelStyle:NSBezelStyleRounded];
+	[importButton setTitle:NSLocalizedString(@"Import…", @"import themes button")];
+	[importButton setTarget:self];
+	[importButton setAction:@selector(importThemes:)];
+	[importButton setAutoresizingMask:NSViewMaxYMargin | NSViewMaxXMargin];
+	[fontsColorsView addSubview:importButton];
+	[importButton release];
+
+	NSButton *openButton = [[NSButton alloc] initWithFrame:NSMakeRect(220, 2, 184, 24)];
+	[openButton setButtonType:NSButtonTypeMomentaryPushIn];
+	[openButton setBezelStyle:NSBezelStyleRounded];
+	[openButton setTitle:NSLocalizedString(@"Open Themes Folder", @"reveal themes folder button")];
+	[openButton setTarget:self];
+	[openButton setAction:@selector(openThemesFolder:)];
+	[openButton setAutoresizingMask:NSViewMaxYMargin | NSViewMaxXMargin];
+	[fontsColorsView addSubview:openButton];
+	[openButton release];
+
+	[self reloadThemePopups];
+}
+
+- (NSPopUpButton *)markdownMarkerPopupWithFrame:(NSRect)frame tag:(NSInteger)tag titles:(NSArray *)titles values:(NSArray *)values selected:(NSString *)selected {
+	NSPopUpButton *popup = [[NSPopUpButton alloc] initWithFrame:frame pullsDown:NO];
+	[popup setTag:tag];
+	[popup setTarget:self];
+	[popup setAction:@selector(changedMarkdownMarker:)];
+	[popup setAutoresizingMask:NSViewMaxYMargin | NSViewMaxXMargin];
+	NSInteger index = 0;
+	NSInteger selectedIndex = 0;
+	for (NSString *title in titles) {
+		NSString *value = [values objectAtIndex:index];
+		NSMenuItem *item = [[popup menu] addItemWithTitle:title action:NULL keyEquivalent:@""];
+		[item setRepresentedObject:value];
+		if ([value isEqualToString:selected] || [title isEqualToString:selected])
+			selectedIndex = index;
+		index++;
+	}
+	[popup selectItemAtIndex:selectedIndex];
+	return popup;
+}
+
+- (void)addMarkdownMarkerControls {
+	if (!editingView || [editingView viewWithTag:7320])
+		return;
+	CGFloat extra = 132.0;
+	NSArray *subviews = [[editingView subviews] copy];
+	NSMutableArray *savedMasks = [[NSMutableArray alloc] initWithCapacity:[subviews count]];
+	for (NSView *subview in subviews) {
+		[savedMasks addObject:[NSNumber numberWithUnsignedInteger:[subview autoresizingMask]]];
+		[subview setAutoresizingMask:NSViewNotSizable];
+	}
+	for (NSView *subview in subviews) {
+		NSRect frame = [subview frame];
+		frame.origin.y += extra;
+		[subview setFrame:frame];
+	}
+	NSRect viewFrame = [editingView frame];
+	viewFrame.size.height += extra;
+	[editingView setFrame:viewFrame];
+	NSUInteger maskIndex = 0;
+	for (NSView *subview in subviews)
+		[subview setAutoresizingMask:[[savedMasks objectAtIndex:maskIndex++] unsignedIntegerValue]];
+	[savedMasks release];
+	[subviews release];
+
+	NSTextField *heading = [self themeLabelWithFrame:NSMakeRect(18, 104, 220, 18) title:NSLocalizedString(@"Markdown", @"Editing settings marker section")];
+	[heading setAlignment:NSTextAlignmentLeft];
+	[heading setFont:[NSFont boldSystemFontOfSize:[NSFont systemFontSize]]];
+	[editingView addSubview:heading];
+	[heading release];
+
+	NSArray *emphasisTitles = [NSArray arrayWithObjects:@"*", @"_", nil];
+	NSTextField *boldLabel = [self themeLabelWithFrame:NSMakeRect(8, 78, 136, 17) title:NSLocalizedString(@"Bold:", @"bold marker popup label")];
+	[editingView addSubview:boldLabel];
+	[boldLabel release];
+	NSPopUpButton *boldPopup = [self markdownMarkerPopupWithFrame:NSMakeRect(148, 72, 72, 26) tag:7320 titles:[NSArray arrayWithObjects:@"**", @"__", nil] values:emphasisTitles selected:[prefsController markdownBoldMarker]];
+	[editingView addSubview:boldPopup];
+	[boldPopup release];
+
+	NSTextField *italicLabel = [self themeLabelWithFrame:NSMakeRect(8, 46, 136, 17) title:NSLocalizedString(@"Italic:", @"italic marker popup label")];
+	[editingView addSubview:italicLabel];
+	[italicLabel release];
+	NSPopUpButton *italicPopup = [self markdownMarkerPopupWithFrame:NSMakeRect(148, 40, 72, 26) tag:7321 titles:emphasisTitles values:emphasisTitles selected:[prefsController markdownItalicMarker]];
+	[editingView addSubview:italicPopup];
+	[italicPopup release];
+
+	NSTextField *listLabel = [self themeLabelWithFrame:NSMakeRect(8, 14, 136, 17) title:NSLocalizedString(@"Unordered List:", @"list marker popup label")];
+	[editingView addSubview:listLabel];
+	[listLabel release];
+	NSArray *listMarkers = [NSArray arrayWithObjects:@"-", @"*", @"+", nil];
+	NSPopUpButton *listPopup = [self markdownMarkerPopupWithFrame:NSMakeRect(148, 8, 72, 26) tag:7322 titles:listMarkers values:listMarkers selected:[prefsController markdownListMarker]];
+	[editingView addSubview:listPopup];
+	[listPopup release];
+}
+
+- (void)addEnterInListControl {
+	if (!editingView || [editingView viewWithTag:7330])
+		return;
+	CGFloat extra = 28.0;
+	NSArray *subviews = [[editingView subviews] copy];
+	NSMutableArray *savedMasks = [[NSMutableArray alloc] initWithCapacity:[subviews count]];
+	for (NSView *subview in subviews) {
+		[savedMasks addObject:[NSNumber numberWithUnsignedInteger:[subview autoresizingMask]]];
+		[subview setAutoresizingMask:NSViewNotSizable];
+	}
+	for (NSView *subview in subviews) {
+		NSRect frame = [subview frame];
+		frame.origin.y += extra;
+		[subview setFrame:frame];
+	}
+	NSRect viewFrame = [editingView frame];
+	viewFrame.size.height += extra;
+	[editingView setFrame:viewFrame];
+	NSUInteger maskIndex = 0;
+	for (NSView *subview in subviews)
+		[subview setAutoresizingMask:[[savedMasks objectAtIndex:maskIndex++] unsignedIntegerValue]];
+	[savedMasks release];
+	[subviews release];
+
+	NSButton *button = [[NSButton alloc] initWithFrame:NSMakeRect(18, 6, 330, 18)];
+	[button setButtonType:NSButtonTypeSwitch];
+	[button setTitle:NSLocalizedString(@"Enter in list renames note", @"Editing settings checkbox")];
+	[button setFont:[NSFont systemFontOfSize:[NSFont systemFontSize]]];
+	[button setTag:7330];
+	[button setTarget:self];
+	[button setAction:@selector(changedEnterInListRenamesNote:)];
+	[button setState:[prefsController enterInListRenamesNote]];
+	[button setAutoresizingMask:NSViewMaxYMargin | NSViewMaxXMargin];
+	[editingView addSubview:button];
+	[button release];
+}
+
+/* The Debug pane: what the app writes to the system log, and a way to look at it.
+   Built here like the other added controls, so the six localized nibs stay as they are. */
+- (NSView *)debugView {
+	if (debugView)
+		return debugView;
+	debugView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 480, 120)];
+
+	NSTextField *heading = [self themeLabelWithFrame:NSMakeRect(8, 89, 150, 17) title:NSLocalizedString(@"Write to system log:", @"Debug settings heading")];
+	[debugView addSubview:heading];
+	[heading release];
+
+	logAllDiagnosticMessagesButton = [[NSButton alloc] initWithFrame:NSMakeRect(166, 89, 300, 18)];
+	[logAllDiagnosticMessagesButton setButtonType:NSButtonTypeSwitch];
+	[logAllDiagnosticMessagesButton setTitle:NSLocalizedString(@"All Diagnostic Messages", @"Debug settings checkbox")];
+	[logAllDiagnosticMessagesButton setFont:[NSFont systemFontOfSize:[NSFont systemFontSize]]];
+	[logAllDiagnosticMessagesButton setTag:7341];
+	[logAllDiagnosticMessagesButton setTarget:self];
+	[logAllDiagnosticMessagesButton setAction:@selector(changedLogAllDiagnosticMessages:)];
+	[logAllDiagnosticMessagesButton setAutoresizingMask:NSViewMaxYMargin | NSViewMaxXMargin];
+	[debugView addSubview:logAllDiagnosticMessagesButton];
+
+	logErrorsAndWarningsButton = [[NSButton alloc] initWithFrame:NSMakeRect(166, 65, 300, 18)];
+	[logErrorsAndWarningsButton setButtonType:NSButtonTypeSwitch];
+	[logErrorsAndWarningsButton setTitle:NSLocalizedString(@"Errors and Warnings Only", @"Debug settings checkbox")];
+	[logErrorsAndWarningsButton setFont:[NSFont systemFontOfSize:[NSFont systemFontSize]]];
+	[logErrorsAndWarningsButton setTag:7340];
+	[logErrorsAndWarningsButton setTarget:self];
+	[logErrorsAndWarningsButton setAction:@selector(changedLogErrorsAndWarnings:)];
+	[logErrorsAndWarningsButton setAutoresizingMask:NSViewMaxYMargin | NSViewMaxXMargin];
+	[debugView addSubview:logErrorsAndWarningsButton];
+
+	NSButton *consoleButton = [[NSButton alloc] initWithFrame:NSMakeRect(160, 22, 160, 24)];
+	[consoleButton setBezelStyle:NSBezelStyleRounded];
+	[consoleButton setTitle:NSLocalizedString(@"Open in Console", @"Debug settings button")];
+	[consoleButton setFont:[NSFont systemFontOfSize:[NSFont systemFontSize]]];
+	[consoleButton setTag:7342];
+	[consoleButton setTarget:self];
+	[consoleButton setAction:@selector(openConsole:)];
+	[consoleButton setAutoresizingMask:NSViewMaxYMargin | NSViewMaxXMargin];
+	[debugView addSubview:consoleButton];
+	[consoleButton release];
+
+	[self updateDebugControls];
+	return debugView;
+}
+
+//every diagnostic message includes the errors and warnings, so that box is shown
+//checked and cannot be turned off while the other is on
+- (void)updateDebugControls {
+	if (!debugView)
+		return;
+	BOOL all = [prefsController logsAllDiagnosticMessages];
+	[logAllDiagnosticMessagesButton setState:all];
+	[logErrorsAndWarningsButton setState:all || [prefsController logsErrorsAndWarnings]];
+	[logErrorsAndWarningsButton setEnabled:!all];
+}
+
+- (IBAction)changedLogErrorsAndWarnings:(id)sender {
+	[prefsController setLogsErrorsAndWarnings:[sender state] sender:self];
+	[self updateDebugControls];
+}
+
+- (IBAction)changedLogAllDiagnosticMessages:(id)sender {
+	[prefsController setLogsAllDiagnosticMessages:[sender state] sender:self];
+	[self updateDebugControls];
+}
+
+- (IBAction)openConsole:(id)sender {
+	NSWorkspace *workspace = [NSWorkspace sharedWorkspace];
+	NSURL *console = [workspace URLForApplicationWithBundleIdentifier:@"com.apple.Console"];
+	if (!console) {
+		NVLogWarning(@"Console.app was not found, so it cannot be opened from the Debug settings");
+		NSBeep();
+		return;
+	}
+	[workspace openApplicationAtURL:console configuration:[NSWorkspaceOpenConfiguration configuration] completionHandler:nil];
+}
+
+- (IBAction)changedEnterInListRenamesNote:(id)sender {
+	[prefsController setEnterInListRenamesNote:[sender state] sender:self];
+}
+
+- (IBAction)changedMarkdownMarker:(id)sender {
+	NSString *value = [[sender selectedItem] representedObject];
+	NSInteger tag = [sender tag];
+	if (tag == 7320)
+		[prefsController setMarkdownBoldMarker:value];
+	else if (tag == 7321)
+		[prefsController setMarkdownItalicMarker:value];
+	else if (tag == 7322)
+		[prefsController setMarkdownListMarker:value];
+}
+
+- (IBAction)changedEditorTheme:(id)sender {
+	[[NVThemeManager sharedManager] setEditorThemeFilename:[[sender selectedItem] representedObject] ?: @""];
+}
+
+- (IBAction)changedPreviewTheme:(id)sender {
+	[[NVThemeManager sharedManager] setPreviewThemeFilename:[[sender selectedItem] representedObject] ?: @""];
+}
+
+- (IBAction)importThemes:(id)sender {
+	[[NVThemeManager sharedManager] beginImportPanelForWindow:window];
+}
+
+- (IBAction)openThemesFolder:(id)sender {
+	[[NVThemeManager sharedManager] openThemesFolder];
 }
 
 - (IBAction)changedBackgroundTextColorWell:(id)sender {
@@ -302,7 +645,7 @@
 }
 
 - (IBAction)changedNotesFolderLocation:(id)sender {
-    NSLog(@"Changed notes folder menu");
+    NVLogInfo(@"Changed notes folder menu");
 }
 
 - (IBAction)changedQuitBehavior:(id)sender {
@@ -375,6 +718,9 @@
 //		[checkSpellingButton setState:[prefsController checkSpellingAsYouType]];
 	} else if ([selectorString isEqualToString:SEL_STR(setConfirmNoteDeletion:sender:)]) {
 		[confirmDeletionButton setState:[prefsController confirmNoteDeletion]];
+	} else if ([selectorString isEqualToString:SEL_STR(setLogsErrorsAndWarnings:sender:)] ||
+			   [selectorString isEqualToString:SEL_STR(setLogsAllDiagnosticMessages:sender:)]) {
+		[self updateDebugControls];
 	}
 }
 
@@ -425,7 +771,7 @@
 				[[prefsController notationPrefs] checkForKnownRedundantSyncConduitsAtPath:directoryPath];
 			}
 		} else {
-			NSLog(@"This folder is already chosen!");
+			NVLogWarning(@"This folder is already chosen!");
 		}
 		
 	}
@@ -445,7 +791,7 @@
     NSString *startingDirectory = nil;
 	
     if (!notesDirectoryRef) {
-		NSLog(@"notesDirectoryRef is NULL!");
+		NVLogError(@"notesDirectoryRef is NULL!");
 		return NO;
     }
     
@@ -472,7 +818,7 @@
 		@try {
 			[openPanel setDirectoryURL:[NSURL fileURLWithPath:startingDirectory isDirectory:YES]];
 		} @catch (NSException *exception) {
-			NSLog(@"Opening the notes folder picker without a starting directory (%@)", [exception reason]);
+			NVLogInfo(@"Opening the notes folder picker without a starting directory (%@)", [exception reason]);
 		}
     }
     [openPanel setAllowedFileTypes:nil];
@@ -558,6 +904,10 @@
 	[makeURLsClickable setState:[prefsController URLsAreClickable]];
     [rtlButton setState:[prefsController rtl]];
     [self addListFontControls];
+    [self addThemeControls];
+    [self addMarkdownMarkerControls];
+    [self addEnterInListControl];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(themesDidChange:) name:NVThemesDidChangeNotification object:nil];
     [self previewNoteBodyFont];
 	[appShortcutField setStringValue:[[prefsController appActivationKeyCombo] description]];
 	[searchHighlightColorWell setColor:[prefsController searchTermHighlightColorRaw:YES]];
@@ -591,8 +941,6 @@
     [showGridButton setState:[prefsController showGrid]];
     [autoPairButton setState:[prefsController useAutoPairing]];
     items = [[NSMutableDictionary alloc] init];
-    [useETScrollbarsOnLionButton setState:[prefsController useETScrollbarsOnLion]];
-    [useETScrollbarsOnLionButton setHidden:!IsLionOrLater];
     [self installSettingsSplitView];
 }
 
@@ -606,7 +954,7 @@
 }
 
 - (NSArray *)toolbarDefaultItemIdentifiers:(NSToolbar*)theToolbar {
-    return [NSArray arrayWithObjects:@"General", @"Notes", @"Editing", @"Fonts & Colors", nil];
+    return [NSArray arrayWithObjects:@"General", @"Notes", @"Editing", @"Fonts & Colors", @"Debug", nil];
 }
 
 - (NSArray *)toolbarSelectableItemIdentifiers: (NSToolbar *)toolbar {
@@ -615,11 +963,11 @@
 }
 
 - (NSArray *)settingsPaneNames {
-	return [NSArray arrayWithObjects:@"General", @"Notes", @"Editing", @"Fonts & Colors", nil];
+	return [NSArray arrayWithObjects:@"General", @"Notes", @"Editing", @"Fonts & Colors", @"Debug", nil];
 }
 
 - (NSArray *)settingsPaneSymbols {
-	return [NSArray arrayWithObjects:@"gearshape", @"note.text", @"square.and.pencil", @"textformat", nil];
+	return [NSArray arrayWithObjects:@"gearshape", @"note.text", @"square.and.pencil", @"textformat", @"ladybug", nil];
 }
 
 - (NSString *)localizedSettingsTitleForPane:(NSString *)name {
@@ -635,6 +983,8 @@
 		return editingView;
 	if ([name isEqualToString:@"Fonts & Colors"])
 		return fontsColorsView;
+	if ([name isEqualToString:@"Debug"])
+		return [self debugView];
 	return nil;
 }
 
@@ -643,7 +993,7 @@
 	CGFloat paneWidth = 0;
 	CGFloat paneHeight = 0;
 	NSView *notesPane = [self databaseView];
-	NSArray *panes = [NSArray arrayWithObjects:generalView, notesPane, editingView, fontsColorsView, nil];
+	NSArray *panes = [NSArray arrayWithObjects:generalView, notesPane, editingView, fontsColorsView, [self debugView], nil];
 	for (NSView *pane in panes) {
 		paneWidth = MAX(paneWidth, NSWidth([pane frame]));
 		paneHeight = MAX(paneHeight, NSHeight([pane frame]));
@@ -714,7 +1064,12 @@
 	NSUInteger index = [[self settingsPaneNames] indexOfObject:selected];
 	if (index == NSNotFound)
 		index = 0;
+	/* Row 0 is already selected by the time the delegate exists: attaching the
+	   data source selects it because an empty selection is not allowed, and that
+	   happens before setDelegate:. Selecting General again sends no notification,
+	   so the pane would stay empty until another row is chosen. */
 	[sidebarTable selectRowIndexes:[NSIndexSet indexSetWithIndex:index] byExtendingSelection:NO];
+	[self showSettingsPaneNamed:[[self settingsPaneNames] objectAtIndex:index]];
 }
 
 - (void)showSettingsPaneNamed:(NSString *)name {

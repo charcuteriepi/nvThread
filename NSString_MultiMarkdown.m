@@ -67,7 +67,7 @@
 }
 
 
-+(NSString*)processMultiMarkdown:(NSString*)inputString
++(NSString*)processMultiMarkdown:(NSString*)inputString includingSourcePositions:(BOOL)sourcePositions
 {
 	if (!inputString)
 		return @"";
@@ -75,7 +75,14 @@
 	NSRange tagFoundRange = [inputString rangeOfString:@"@taskpaper"];
 	if (archiveFoundRange.location != NSNotFound || tagFoundRange.location != NSNotFound)
 		inputString = [self processTaskPaper:inputString];
+	if (sourcePositions)
+		return [NVApexMarkdown htmlFromMarkdownIncludingSourcePositions:inputString];
 	return [NVApexMarkdown htmlFromMarkdown:inputString];
+}
+
++(NSString*)processMultiMarkdown:(NSString*)inputString
+{
+	return [self processMultiMarkdown:inputString includingSourcePositions:NO];
 }
 
 +(NSString*)documentWithProcessedMultiMarkdown:(NSString*)inputString
@@ -86,6 +93,9 @@
   NSString *cssString = [[PreviewController class] css];
   NSMutableString *outputString = [NSMutableString stringWithString:(NSString *)htmlString];
   NSString *noteTitle =  ([app selectedNoteObject]) ? [NSString stringWithFormat:@"%@",titleOfNote([app selectedNoteObject])] : @"";
+  NSString *themedDocument = [PreviewController themedHTMLDocumentForTitle:noteTitle contentHTML:processedString];
+  if (themedDocument)
+    return themedDocument;
 		NSString *nvSupportPath = [[NSFileManager defaultManager] applicationSupportDirectory];
 
   [outputString replaceOccurrencesOfString:@"{%support%}" withString:nvSupportPath options:0 range:NSMakeRange(0, [outputString length])];
@@ -104,5 +114,10 @@
 {
 	return [self processMultiMarkdown:inputString];
 } // stringWithProcessedMultiMarkdown:
+
++(NSString*)stringWithProcessedMultiMarkdown:(NSString*)inputString includingSourcePositions:(BOOL)sourcePositions
+{
+	return [self processMultiMarkdown:inputString includingSourcePositions:sourcePositions];
+}
 
 @end // NSString (MultiMarkdown)

@@ -22,6 +22,7 @@
 
 
 #import "NoteObject.h"
+#import "TagSearch.h"
 #import "GlobalPrefs.h"
 #import "LabelObject.h"
 #import "WALController.h"
@@ -69,6 +70,7 @@ static void setCatalogNodeID(NoteObject *note, UInt32 cnid);
 		currentFormatID = SingleDatabaseFormat;
 		fileEncoding = NSUTF8StringEncoding;
 		selectedRange = NSMakeRange(NSNotFound, 0);
+		firstVisibleCharIndex = NSNotFound;
 		
 		//other instance variables initialized on demand
         return self;
@@ -336,6 +338,9 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 			createdDate = [decoder decodeDoubleForKey:VAR_STR(createdDate)];
 			selectedRange.location = [decoder decodeInt32ForKey:@"selectionRangeLocation"];
 			selectedRange.length = [decoder decodeInt32ForKey:@"selectionRangeLength"];
+			//notes written before the scroll position was kept have no key here and stay at NSNotFound
+			if ([decoder containsValueForKey:VAR_STR(firstVisibleCharIndex)])
+				firstVisibleCharIndex = (NSUInteger)[decoder decodeInt64ForKey:VAR_STR(firstVisibleCharIndex)];
 			contentsWere7Bit = [decoder decodeBoolForKey:VAR_STR(contentsWere7Bit)];
 			
 			logSequenceNumber = [decoder decodeInt32ForKey:VAR_STR(logSequenceNumber)];
@@ -445,6 +450,8 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 		[coder encodeDouble:createdDate forKey:VAR_STR(createdDate)];
 		[coder encodeInt32:(unsigned int)selectedRange.location forKey:@"selectionRangeLocation"];
 		[coder encodeInt32:(unsigned int)selectedRange.length forKey:@"selectionRangeLength"];
+		if (firstVisibleCharIndex != NSNotFound)
+			[coder encodeInt64:(int64_t)firstVisibleCharIndex forKey:VAR_STR(firstVisibleCharIndex)];
 		[coder encodeBool:contentsWere7Bit forKey:VAR_STR(contentsWere7Bit)];
 		
 		[coder encodeInt32:logSequenceNumber forKey:VAR_STR(logSequenceNumber)];
@@ -520,7 +527,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 		contentString = [[NSMutableAttributedString alloc] initWithAttributedString:bodyText];
 		[self initContentCacheCString];
 		if (!cContents) {
-			NSLog(@"couldn't get UTF8 string from contents?!?");
+			NVLogError(@"couldn't get UTF8 string from contents?!?");
 			return nil;
 		}
 
@@ -808,7 +815,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 		
 		if (!externalTrigger) {
 			if ([delegate noteFileRenamed:noteFileRefInit(self) fromName:oldName toName:filename] != noErr) {
-				NSLog(@"Couldn't rename note %@", titleString);
+				NVLogError(@"Couldn't rename note %@", titleString);
 				
 				//revert name
 				[filename release];
@@ -906,6 +913,18 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 	return selectedRange;
 }
 
+- (void)setFirstVisibleCharIndex:(NSUInteger)charIndex {
+	//where the note was scrolled to when last shown; NSNotFound means nothing is known and keeps the old value
+	if (charIndex != NSNotFound && charIndex != firstVisibleCharIndex) {
+		firstVisibleCharIndex = charIndex;
+		[self makeNoteDirtyUpdateTime:NO updateFile:NO];
+	}
+}
+
+- (NSUInteger)firstVisibleCharIndex {
+	return firstVisibleCharIndex;
+}
+
 //these two methods let us get the actual label objects in use by other notes
 //they assume that the label string already contains the title of the label object(s); that there is only replacement and not addition
 - (void)replaceMatchingLabelSet:(NSSet*)aLabelSet {
@@ -965,7 +984,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 		[labelSet autorelease];
 		labelSet = nil;
 	} else {
-		NSLog(@"not disconnecting labels because no delegate exists");
+		NVLogWarning(@"not disconnecting labels because no delegate exists");
 	}
 }
 
@@ -1143,7 +1162,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 		return NO;
     
     if (fileWasCreated) {
-		NSLog(@"writing note %@, because it didn't exist", titleString);
+		NVLogInfo(@"writing note %@, because it didn't exist", titleString);
 		return [self writeUsingCurrentFileFormat];
     }
     
@@ -1158,11 +1177,11 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 		(err = (UCConvertUTCDateTimeToCFAbsoluteTime(&info.contentModDate, &timeOnDisk) == noErr))) {
 		
 		if (lastTime > timeOnDisk) {
-			NSLog(@"writing note %@, because it was modified", titleString);
+			NVLogInfo(@"writing note %@, because it was modified", titleString);
 			return [self writeUsingCurrentFileFormat];
 		}
     } else {
-		NSLog(@"Could not convert dates: %d", err);
+		NVLogError(@"Could not convert dates: %d", err);
 		return NO;
     }
     
@@ -1202,9 +1221,9 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
         
 	}
 	@catch (NSException *exception) {
-		NSLog(@"%@",exception);
+		NVLogError(@"%@",exception);
 	}
-    NSLog(@"didn't mirrror:>%@<",titleString);
+    NVLogWarning(@"didn't mirrror:>%@<",titleString);
     return NO;
 
 }
@@ -1232,7 +1251,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 				//but we can auto-detect UTF-8, so what the heck
 				[self _setFileEncoding:NSUTF8StringEncoding];
 				//maybe we could rename the file file.utf8.txt here
-				NSLog(@"promoting to unicode (UTF-8)");
+				NVLogInfo(@"promoting to unicode (UTF-8)");
 				formattedData = [[contentString string] dataUsingEncoding:fileEncoding allowLossyConversion:YES];
 			}
 			break;
@@ -1251,7 +1270,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 			//our links will always be to filenames, so hopefully we shouldn't have to change anything
 			break;
 		default:
-			NSLog(@"Attempted to write using unknown format ID: %ld", (long)formatID);
+			NVLogError(@"Attempted to write using unknown format ID: %ld", (long)formatID);
 			//return NO;
     }
     
@@ -1272,7 +1291,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 		
 		OSStatus err = noErr;
 		if ((err = [delegate storeDataAtomicallyInNotesDirectory:formattedData withName:filename destinationRef:noteFileRefInit(self)]) != noErr) {
-			NSLog(@"Unable to save note file %@", filename);
+			NVLogError(@"Unable to save note file %@", filename);
 			
 			[delegate noteDidNotWrite:self errorCode:err];
 			return NO;
@@ -1303,7 +1322,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 		
     } else {
 		[delegate noteDidNotWrite:self errorCode:kDataFormattingErr];
-		NSLog(@"Unable to convert note contents into format %ld", (long)formatID);
+		NVLogError(@"Unable to convert note contents into format %ld", (long)formatID);
 		return NO;
     }
     
@@ -1329,14 +1348,14 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 	} while (fnfErr == err);
 
 	if (noErr != err) {
-		NSLog(@"could not set catalog info: %d", err);
+		NVLogError(@"could not set catalog info: %d", err);
 		return err;
 	}
 	
 	//regardless of whether FSSetCatalogInfo was successful, the file mod date could still have changed
 	
 	if ((err = [delegate fileInNotesDirectory:noteFileRefInit(self) isOwnedByUs:NULL hasCatalogInfo:&catInfo]) != noErr) {
-		NSLog(@"Unable to get new modification date of file %@: %d", filename, err);
+		NVLogError(@"Unable to get new modification date of file %@: %d", filename, err);
 		return err;
 	}
 	fileModifiedDate = catInfo.contentModDate;
@@ -1356,7 +1375,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 	if ((err = FSRefMakePath(fsRef, [pathData mutableBytes], [pathData length])) == noErr) {
 		[[NSFileManager defaultManager] setTextEncodingAttribute:fileEncoding atFSPath:[pathData bytes]];
 	} else {
-		NSLog(@"%@: error getting path from FSRef: %d (IsZeros: %d)", NSStringFromSelector(_cmd), err, IsZeros(fsRef, sizeof(fsRef)));
+		NVLogError(@"%@: error getting path from FSRef: %d (IsZeros: %d)", NSStringFromSelector(_cmd), err, IsZeros(fsRef, sizeof(fsRef)));
 	}
 	return err;
 }
@@ -1380,7 +1399,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 			if ([delegate currentNoteStorageFormat] == PlainTextFormat) {
 				//actual conversion is expected because notes are presently being maintained as plain text files
 				
-				NSLog(@"rewriting %@ as utf8 data", titleString);
+				NVLogInfo(@"rewriting %@ as utf8 data", titleString);
 				didUpgrade = [self writeUsingCurrentFileFormat];
 			} else if ([delegate currentNoteStorageFormat] == SingleDatabaseFormat) {
 				//update last-written-filemod time to guarantee proper encoding at next DB storage format switch, 
@@ -1388,7 +1407,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 				//a side effect is that if the user switches to an RTF or HTML format,
 				//this note will be written immediately instead of lazily upon the next modification
 				if (UCConvertCFAbsoluteTimeToUTCDateTime(CFAbsoluteTimeGetCurrent(), &fileModifiedDate) != noErr)
-					NSLog(@"%@: can't set file modification date from current date", NSStringFromSelector(_cmd));
+					NVLogError(@"%@: can't set file modification date from current date", NSStringFromSelector(_cmd));
 			}
 		}
 		//make note dirty to ensure these changes are saved
@@ -1434,7 +1453,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 - (BOOL)updateFromFile {
     NSMutableData *data = [delegate dataFromFileInNotesDirectory:noteFileRefInit(self) forFilename:filename];
     if (!data) {
-		NSLog(@"Couldn't update note from file on disk");
+		NVLogError(@"Couldn't update note from file on disk");
 		return NO;
     }
 	
@@ -1457,7 +1476,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 	
     NSMutableData *data = [delegate dataFromFileInNotesDirectory:noteFileRefInit(self) forCatalogEntry:catEntry];
     if (!data) {
-		NSLog(@"Couldn't update note from file on disk given catalog entry");
+		NVLogError(@"Couldn't update note from file on disk given catalog entry");
 		return NO;
     }
 	    
@@ -1483,7 +1502,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 			//this file has either never had tags or has had them cleared by accident (e.g., non-user intervention)
 			//so if this note still has tags, then restore them now.
 			
-			NSLog(@"restoring lost tags for %@", titleString);
+			NVLogWarning(@"restoring lost tags for %@", titleString);
 			[[NSFileManager defaultManager] setTags:[self orderedLabelTitles] atFSPath:[pathData bytes]];
 			didRestoreLabels = YES;
 		}
@@ -1517,7 +1536,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 - (BOOL)updateFromData:(NSMutableData*)data inFormat:(NSInteger)fmt {
     
     if (!data) {
-		NSLog(@"%@: Data is nil!", NSStringFromSelector(_cmd));
+		NVLogError(@"%@: Data is nil!", NSStringFromSelector(_cmd));
 		return NO;
     }
     
@@ -1537,7 +1556,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 																			  attributes:[[GlobalPrefs defaultPrefs] noteBodyAttributes]];
 			[stringFromData release];
 	    } else {
-			NSLog(@"String could not be initialized from data");
+			NVLogError(@"String could not be initialized from data");
 	    }
 	    
 	    break;
@@ -1552,11 +1571,11 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 		
 	    break;
 	default:
-	    NSLog(@"%@: Unknown format: %ld", NSStringFromSelector(_cmd), fmt);
+	    NVLogError(@"%@: Unknown format: %ld", NSStringFromSelector(_cmd), fmt);
     }
     
     if (!attributedStringFromData) {
-		NSLog(@"Couldn't make string out of data for note %@ with format %ld", titleString, (long)fmt);
+		NVLogError(@"Couldn't make string out of data for note %@ with format %ld", titleString, (long)fmt);
 		return NO;
     }
     
@@ -1598,7 +1617,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 - (void)moveFileToTrash {
 	OSStatus err = noErr;
 	if ((err = [delegate moveFileToTrash:noteFileRefInit(self) forFilename:filename]) != noErr) {
-		NSLog(@"Couldn't move file to trash: %d", err);
+		NVLogError(@"Couldn't move file to trash: %d", err);
 	} else {
 		//file's gone! don't assume it's not coming back. if the storage format was not single-db, this note better be removed
 		//currentFormatID = SingleDatabaseFormat;
@@ -1613,7 +1632,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 		if (err != fnfErr) {
 			//what happens if we wanted to undo the deletion? moveFileToTrash will now tell the note that it shouldn't look for the file
 			//so it would not be rewritten on re-creation?
-			NSLog(@"Unable to delete file %@ (%d); moving to trash instead", filename, err);
+			NVLogError(@"Unable to delete file %@ (%d); moving to trash instead", filename, err);
 			[self moveFileToTrash];
 		}
 	}
@@ -1652,7 +1671,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 			//this will be updated again when writing to a file, but for now we have the newest version
 			//we must do this to allow new notes to be written when switching formats, and for encodingmanager checks
 			if (UCConvertCFAbsoluteTimeToUTCDateTime(modifiedDate, &fileModifiedDate) != noErr)
-				NSLog(@"Unable to set file modification date from current date");
+				NVLogError(@"Unable to set file modification date from current date");
 		}
 	}
 	if (updateFile && updateTime) {
@@ -1686,7 +1705,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 		case PlainTextFormat:
 			if (!(formattedData = [[contentMinusColor string] dataUsingEncoding:fileEncoding allowLossyConversion:NO])) {
 				[self _setFileEncoding:NSUTF8StringEncoding];
-				NSLog(@"promoting to unicode (UTF-8) on export--probably because internal format is singledb");
+				NVLogInfo(@"promoting to unicode (UTF-8) on export--probably because internal format is singledb");
 				formattedData = [[contentMinusColor string] dataUsingEncoding:fileEncoding allowLossyConversion:YES];
 			}
 			break;
@@ -1707,7 +1726,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 																					 forKey:NSDocumentTypeDocumentAttribute] error:&error];
 			break;
 		default:
-			NSLog(@"Attempted to export using unknown format ID: %d", storageFormat);
+			NVLogError(@"Attempted to export using unknown format ID: %d", storageFormat);
     }
 	if (!formattedData)
 		return kDataFormattingErr;
@@ -1725,16 +1744,16 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 	FSRef fileRef;
 	OSStatus err = FSCreateFileIfNotPresentInDirectory(directoryRef, &fileRef, (CFStringRef)newfilename, (Boolean*)&fileWasCreated);
 	if (err != noErr) {
-		NSLog(@"FSCreateFileIfNotPresentInDirectory: %d", err);
+		NVLogError(@"FSCreateFileIfNotPresentInDirectory: %d", err);
 		return err;
 	}
 	if (!fileWasCreated && !overwrite) {
-		NSLog(@"File already existed!");
+		NVLogWarning(@"File already existed!");
 		return dupFNErr;
 	}
 	//yes, the file is probably not on the same volume as our notes directory
 	if ((err = FSRefWriteData(&fileRef, BlockSizeForNotation(delegate), [formattedData length], [formattedData bytes], 0, true)) != noErr) {
-		NSLog(@"error writing to temporary file: %d", err);
+		NVLogError(@"error writing to temporary file: %d", err);
 		return err;
     }
 	if (PlainTextFormat == storageFormat) {
@@ -1785,7 +1804,7 @@ force_inline id unifiedCellForNote(NotesTableView *tv, NoteObject *note, NSInteg
 		[[delegate delegate] contentsUpdatedForNote:self];
 	} else {
 		NSBeep();
-		NSLog(@"odbEditor:didModifyFile: unable to get data from %@", path);
+		NVLogError(@"odbEditor:didModifyFile: unable to get data from %@", path);
 	}	
 }
 -(void)odbEditor:(ODBEditor *)editor didClosefile:(NSString *)path context:(NSDictionary *)context {
@@ -1818,6 +1837,14 @@ force_inline void resetFoundPtrsForNote(NoteObject *note) {
 	note->cTitleFoundPtr = note->cTitle;
 	note->cContentsFoundPtr = note->cContents;
 	note->cLabelsFoundPtr = note->cLabels;	
+}
+
+BOOL noteMatchesTagWord(NoteObject *note, NVTagWordFilterContext *context) {
+	if (!note || !context)
+		return NO;
+	// Read the base buffers and leave the scan pointers alone, so a later
+	// normal word still matches anywhere in the note.
+	return NVNoteMatchesTagWord([note orderedLabelTitles], note->cTitle, note->cContents, note->cLabels, context->prefix, context->literal);
 }
 
 BOOL noteContainsUTF8String(NoteObject *note, NoteFilterContext *context) {

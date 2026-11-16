@@ -110,6 +110,9 @@ BOOL ColorsEqualWith8BitChannels(NSColor *c1, NSColor *c2);
 - (void)setTabIndenting:(BOOL)value sender:(id)sender;
 - (BOOL)tabKeyIndents;
 
+- (void)setEnterInListRenamesNote:(BOOL)value sender:(id)sender;
+- (BOOL)enterInListRenamesNote;
+
 //- (void)setUseTextReplacement:(BOOL)value sender:(id)sender;
 //- (BOOL)useTextReplacement;
 
@@ -118,6 +121,10 @@ BOOL ColorsEqualWith8BitChannels(NSColor *c1, NSColor *c2);
 
 - (void)setConfirmNoteDeletion:(BOOL)value sender:(id)sender;
 - (BOOL)confirmNoteDeletion;
+- (void)setLogsErrorsAndWarnings:(BOOL)value sender:(id)sender;
+- (BOOL)logsErrorsAndWarnings;
+- (void)setLogsAllDiagnosticMessages:(BOOL)value sender:(id)sender;
+- (BOOL)logsAllDiagnosticMessages;
 
 - (void)setQuitWhenClosingWindow:(BOOL)value sender:(id)sender;
 - (BOOL)quitWhenClosingWindow;
@@ -175,6 +182,8 @@ BOOL ColorsEqualWith8BitChannels(NSColor *c1, NSColor *c2);
 - (void)setLastSelectedPreferencesPane:(NSString*)pane sender:(id)sender;
 
 - (double)scrollOffsetOfLastSelectedNote;
+- (void)setTopCharIndexOfLastSelectedNote:(NSUInteger)charIndex;
+- (NSUInteger)topCharIndexOfLastSelectedNote;
 - (CFUUIDBytes)UUIDBytesOfLastSelectedNote;
 - (NSString*)lastSearchString;
 - (void)setLastSearchString:(NSString*)string selectedNote:(id<SynchronizedNote>)aNote scrollOffsetForTableView:(NotesTableView*)tv sender:(id)sender;
@@ -197,8 +206,6 @@ BOOL ColorsEqualWith8BitChannels(NSColor *c1, NSColor *c2);
 - (BOOL)rtl;
 - (BOOL)showWordCount;
 - (void)setShowWordCount:(BOOL)value;
-- (void)setUseETScrollbarsOnLion:(BOOL)value sender:(id)sender;
-- (BOOL)useETScrollbarsOnLion;
 - (void)setUseMarkdownImport:(BOOL)value sender:(id)sender;
 - (BOOL)useMarkdownImport;
 - (void)setUseReadability:(BOOL)value sender:(id)sender;
@@ -209,6 +216,13 @@ BOOL ColorsEqualWith8BitChannels(NSColor *c1, NSColor *c2);
 - (BOOL)alternatingRows;
 - (void)setUseAutoPairing:(BOOL)value;
 - (BOOL)useAutoPairing;
+
+- (void)setMarkdownBoldMarker:(NSString *)marker;
+- (NSString *)markdownBoldMarker;
+- (void)setMarkdownItalicMarker:(NSString *)marker;
+- (NSString *)markdownItalicMarker;
+- (void)setMarkdownListMarker:(NSString *)marker;
+- (NSString *)markdownListMarker;
 - (void)setMaxNoteBodyWidth:(CGFloat)maxWidth sender:(id)sender;
 - (void)setManagesTextWidthInWindow:(BOOL)manageIt sender:(id)sender;
 - (BOOL)managesTextWidthInWindow;

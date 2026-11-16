@@ -29,6 +29,7 @@
 #import "PassphraseChanger.h"
 #import "NSFileManager_NV.h"
 #import "AppController.h"
+#import "MarkdownButtonLayout.h"
 
 @implementation FileKindListView 
 
@@ -48,7 +49,7 @@ enum {VERIFY_NOT_ATTEMPTED, VERIFY_FAILED, VERIFY_IN_PROGRESS, VERIFY_SUCCESS};
 - (NSView*)view {
     if (!view) {
 		if (![NSBundle loadNibNamed:@"NotationPrefsView" owner:self])  {
-			NSLog(@"Failed to load NotationPrefsView.nib");
+			NVLogError(@"Failed to load NotationPrefsView.nib");
 			return nil;
 		}
     }
@@ -207,6 +208,16 @@ enum {VERIFY_NOT_ATTEMPTED, VERIFY_FAILED, VERIFY_IN_PROGRESS, VERIFY_SUCCESS};
 			@"application/json", @"Accept", nil];
 }
 
+- (NSString *)simplenoteErrorCodeInData:(NSData *)data {
+	if (![data length])
+		return nil;
+	id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+	if (![object isKindOfClass:[NSDictionary class]])
+		return nil;
+	id error = [(NSDictionary *)object objectForKey:@"error"];
+	return [error isKindOfClass:[NSString class]] ? error : nil;
+}
+
 - (NSString *)simplenoteQueryValueNamed:(NSString *)name inEntry:(NSString *)entry {
 	NSRange found = [entry rangeOfString:[name stringByAppendingString:@"="]];
 	if (found.location == NSNotFound)
@@ -248,22 +259,50 @@ enum {VERIFY_NOT_ATTEMPTED, VERIFY_FAILED, VERIFY_IN_PROGRESS, VERIFY_SUCCESS};
 }
 
 - (void)addMarkdownConversionButton {
-	NSView *storageView = [storageFormatPopupButton superview];
+	NSButton *anchor = confirmFileDeletionButton;
+	NSView *storageView = [anchor superview];
 	if (!storageView || [storageView viewWithTag:7301])
 		return;
 	NSButton *button = [[NSButton alloc] initWithFrame:NSZeroRect];
 	[button setBezelStyle:NSBezelStyleRounded];
 	[button setButtonType:NSButtonTypeMomentaryPushIn];
 	[button setTitle:NSLocalizedString(@"Convert to Markdown", @"Notes storage button")];
+	[[button cell] setWraps:NO];
+	[[button cell] setLineBreakMode:NSLineBreakByTruncatingTail];
 	[button setTag:7301];
 	[button setTarget:self];
 	[button setAction:@selector(convertNotesToMarkdown:)];
 	[button sizeToFit];
-	NSRect frame = [button frame];
-	frame.origin = NSMakePoint(42, 14);
-	frame.size.width = MAX(frame.size.width + 16, 180);
-	[button setFrame:frame];
+
+	NSRect checkbox = [anchor frame];
+	CGFloat upperSlack = NSHeight([storageView bounds]);
+	for (NSView *subview in [storageView subviews]) {
+		if (NSMinY([subview frame]) + 0.5 < NSMinY(checkbox))
+			continue;
+		CGFloat room = NSHeight([storageView bounds]) - NSMaxY([subview frame]);
+		if (room < upperSlack)
+			upperSlack = room;
+	}
+	NSRect fitted = [button frame];
+	CGFloat maxWidth = NSWidth([storageView bounds]) - NSMinX(checkbox) - 8.0;
+	CGFloat width = MAX(ceil(fitted.size.width + 16.0), 180.0);
+	if (maxWidth >= 120.0 && width > maxWidth)
+		width = maxWidth;
+	CGFloat shift = 0.0;
+	NSRect frame = NVMarkdownConversionButtonFrame(checkbox, width, fitted.size.height, upperSlack, &shift);
+	if (shift > 0.0) {
+		for (NSView *subview in [storageView subviews]) {
+			NSRect subFrame = [subview frame];
+			if (NSMinY(subFrame) + 0.5 < NSMinY(checkbox))
+				continue;
+			subFrame.origin.y += shift;
+			[subview setFrame:subFrame];
+		}
+	}
+	[button setFrame:NSIntegralRect(frame)];
 	[button setAutoresizingMask:NSViewMaxXMargin | NSViewMaxYMargin];
+	if (@available(macOS 14.0, *))
+		[button setClipsToBounds:YES];
 	[storageView addSubview:button];
 	[button release];
 }
@@ -572,10 +611,11 @@ enum {VERIFY_NOT_ATTEMPTED, VERIFY_FAILED, VERIFY_IN_PROGRESS, VERIFY_SUCCESS};
 }
 
 - (void)syncEditingDidEnd:(NSNotification *)aNotification {
-	if (!verificationAttempted) {
-		[self cancelLoginVerifier];
-		[self startLoginVerifier];
-	}
+	// A login code works once. Submit it when editing ends, and leave an
+	// in-flight request alone so Return cannot send the same code again.
+	if ([aNotification object] != syncPasswordField || loginVerifier)
+		return;
+	[self startLoginVerifier];
 }
 
 - (void)syncCredentialsDidChange:(NSNotification *)aNotification {
@@ -583,10 +623,8 @@ enum {VERIFY_NOT_ATTEMPTED, VERIFY_FAILED, VERIFY_IN_PROGRESS, VERIFY_SUCCESS};
 	if ([aNotification object] == syncAccountField) {
 		[notationPrefs removeSyncPasswordForService:SimplenoteServiceName];
 		[notationPrefs setSyncUsername:[syncAccountField stringValue] forService:SimplenoteServiceName];
-		
-		[self startVerifyingAfterDelay];
-	} else if ([aNotification object] == syncPasswordField) {
-		[self startVerifyingAfterDelay];
+	} else if ([aNotification object] == syncPasswordField && !loginVerifier && verificationAttempted) {
+		[self setVerificationStatus:VERIFY_NOT_ATTEMPTED withString:@""];
 	}
 }
 
@@ -612,12 +650,6 @@ enum {VERIFY_NOT_ATTEMPTED, VERIFY_FAILED, VERIFY_IN_PROGRESS, VERIFY_SUCCESS};
 	}
 	[verifyStatusImageView setHidden: VERIFY_NOT_ATTEMPTED == status];
 	[verifyStatusField setStringValue: aString ? aString : @""];
-}
-
-- (void)startVerifyingAfterDelay {
-	[self cancelLoginVerifier];
-	
-	[self performSelector:@selector(startLoginVerifier) withObject:nil afterDelay:1.5];
 }
 
 - (void)cancelLoginVerifier {
@@ -658,6 +690,10 @@ enum {VERIFY_NOT_ATTEMPTED, VERIFY_FAILED, VERIFY_IN_PROGRESS, VERIFY_SUCCESS};
 }
 
 - (void)syncResponseFetcher:(SyncResponseFetcher*)fetcher receivedData:(NSData*)data returningError:(NSString*)errString {
+	if (fetcher == loginVerifier) {
+		[loginVerifier autorelease];
+		loginVerifier = nil;
+	}
 	BOOL httpFailed = errString || [fetcher statusCode] >= 400;
 	BOOL requestedCode = [[fetcher representedObject] isEqualToString:@"request-login"];
 	if (requestedCode) {
@@ -666,7 +702,7 @@ enum {VERIFY_NOT_ATTEMPTED, VERIFY_FAILED, VERIFY_IN_PROGRESS, VERIFY_SUCCESS};
 		} else if (httpFailed) {
 			[self setVerificationStatus:VERIFY_FAILED withString:NSLocalizedString(@"Simplenote did not send a login code.", @"Simplenote login status")];
 		} else {
-			[self setVerificationStatus:VERIFY_NOT_ATTEMPTED withString:NSLocalizedString(@"Check your email and paste the login code.", @"Simplenote login status")];
+			[self setVerificationStatus:VERIFY_NOT_ATTEMPTED withString:NSLocalizedString(@"Check your email, paste the code, and press Return.", @"Simplenote login status")];
 		}
 		return;
 	}
@@ -676,7 +712,12 @@ enum {VERIFY_NOT_ATTEMPTED, VERIFY_FAILED, VERIFY_IN_PROGRESS, VERIFY_SUCCESS};
 		return;
 	}
 	if (httpFailed) {
-		[self setVerificationStatus:VERIFY_FAILED withString:NSLocalizedString(@"That login code was not accepted.", @"Simplenote login status")];
+		NSString *errorCode = [self simplenoteErrorCodeInData:data];
+		NVLogWarning(@"Simplenote rejected the login code (HTTP %ld%@).", (long)[fetcher statusCode], errorCode ? [@", " stringByAppendingString:errorCode] : @"");
+		NSString *message = NSLocalizedString(@"That login code was not accepted.", @"Simplenote login status");
+		if ([errorCode isEqualToString:@"request-not-found"])
+			message = NSLocalizedString(@"That login code has expired. Email yourself a new one.", @"Simplenote login status");
+		[self setVerificationStatus:VERIFY_FAILED withString:message];
 		return;
 	}
 
@@ -819,7 +860,7 @@ enum {VERIFY_NOT_ATTEMPTED, VERIFY_FAILED, VERIFY_IN_PROGRESS, VERIFY_SUCCESS};
 		}
 		
 	} else {
-		NSLog(@"Not disabling encryption because it is already off.");
+		NVLogWarning(@"Not disabling encryption because it is already off.");
 	}
 }
 

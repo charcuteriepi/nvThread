@@ -51,7 +51,7 @@
 
 @interface AppController : NSObject 
 #if MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_6
-<NSToolbarDelegate, NSTableViewDelegate, NSWindowDelegate, NSTextFieldDelegate, NSTextViewDelegate>
+<NSToolbarDelegate, NSTableViewDelegate, NSWindowDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSSharingServicePickerDelegate>
 #endif
 {
 	IBOutlet NSMenuItem *fsMenuItem;
@@ -73,6 +73,8 @@
     NSDictionary *fieldAttributes;
 	NSTimer *modifierTimer;
 	IBOutlet WordCountToken *wordCounter;
+	NSButton *editorShareButton;
+	NSSharingServicePicker *editorSharePicker;
     IBOutlet DualField *field;
 	RBSplitSubview *splitSubview;
 	RBSplitSubview *notesSubview;
@@ -107,6 +109,7 @@
 //	SpaceSwitchingContext spaceSwitchCtx;
 	ViewLocationContext listUpdateViewCtx;
 	BOOL isFilteringFromTyping, typedStringIsCached;
+	BOOL scrollGuarded;
 	BOOL isCreatingANote;
 	NSString *typedString;
     BOOL isEditing;
@@ -115,6 +118,7 @@
 	NSArray *savedSelectedNotes;
 	BOOL hasLaunched;
     PreviewController *previewController;
+    NSWindow *shortcutsHelpWindow;
     // IBOutlet NSMenuItem *markdownPreview;
     IBOutlet NSMenuItem *multiMarkdownPreview;
     IBOutlet NSMenuItem *textilePreview;
@@ -147,6 +151,8 @@ void outletObjectAwoke(id sender);
 - (IBAction)printNote:(id)sender;
 - (IBAction)tagNote:(id)sender;
 - (IBAction)importNotes:(id)sender;
+- (IBAction)importURL:(id)sender;
+- (void)focusSearchOnImportedNote:(NoteObject *)note;
 - (IBAction)switchViewLayout:(id)sender;
 
 - (IBAction)fieldAction:(id)sender;
@@ -174,6 +180,8 @@ void outletObjectAwoke(id sender);
 - (NSString*)fieldSearchString;
 - (void)cacheTypedStringIfNecessary:(NSString*)aString;
 - (NSString*)typedString;
+- (NSString*)searchStringForHighlighting;
+- (void)noteBodyWasClaimed:(LinkingEditor*)editor;
 
 - (IBAction)showHelpDocument:(id)sender;
 - (IBAction)showAboutPanel:(id)sender;

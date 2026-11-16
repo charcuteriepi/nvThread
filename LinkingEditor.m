@@ -11,7 +11,9 @@
 
 
 #import "LinkingEditor.h"
+#import "NoteLayout.h"
 #import "GlobalPrefs.h"
+#import "SearchHighlight.h"
 #import "AppController.h"
 #import "AppController_Importing.h"
 #import "NotesTableView.h"
@@ -19,7 +21,19 @@
 #import "NSCollection_utils.h"
 #import "AttributedPlainText.h"
 #import "NSString_NV.h"
+#import "NVAutoPair.h"
 #import "NVPasswordGenerator.h"
+#import "NVThemeManager.h"
+#import "MarkdownHighlight.h"
+#import "CriticMarkup.h"
+#import "TagSearch.h"
+#import "LinkReferenceCompletion.h"
+#import "ClickBelowText.h"
+#import "SelectionRedraw.h"
+#import "TaskList.h"
+#import "ListOutdent.h"
+#import "ListIndent.h"
+#import "ETScrollView.h"
 #import "ETClipView.h"
 //#import "NSTextFinder.h"
 //#import "NVTextFinderAdditions.h"
@@ -56,6 +70,53 @@ static long (*GetGetScriptManagerVariablePointer())(short);
 @end
 
 
+@interface LinkingEditor (NVCompletionTheme)
+- (NSColor *)nv_themeForegroundColor;
+- (NSColor *)nv_linkBracketColor;
+- (void)nv_applyCompletionSelectionColor;
+- (void)nv_restoreSelectedTextAttributes;
+- (void)nv_recolorCompletionBrackets;
+- (void)nv_reapplyCompletionColors;
+@end
+
+static NSString * const NVSearchHighlightAttributeName = @"NVSearchHighlight";
+
+@interface LinkingEditor (NVSearchHighlightOverlay)
+- (void)nv_drawSearchHighlightsInOverlay:(NSView *)overlay dirtyRect:(NSRect)dirtyRect;
+@end
+
+/* The note draws search ink in a surface that sits above -drawRect:, so a chip
+   painted there never appears behind the letters. This view is flipped like the
+   text view and stays above that surface. */
+@interface NVSearchHighlightOverlay : NSView
+@end
+
+@implementation NVSearchHighlightOverlay
+
+- (BOOL)isFlipped {
+	return YES;
+}
+
+- (BOOL)isOpaque {
+	return NO;
+}
+
+- (NSView *)hitTest:(NSPoint)point {
+	return nil;
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+	NSView *parent = [self superview];
+	if ([parent respondsToSelector:@selector(nv_drawSearchHighlightsInOverlay:dirtyRect:)])
+		[(LinkingEditor *)parent nv_drawSearchHighlightsInOverlay:self dirtyRect:dirtyRect];
+}
+
+@end
+
+@interface LinkingEditor (NVSelectionScroll)
+- (void)nv_allowSelectionScroll;
+@end
+
 @implementation LinkingEditor
 
 @synthesize beforeString;
@@ -72,7 +133,11 @@ CGFloat _perceptualDarkness(NSColor*a);
 //}
 
 - (void)awakeFromNib {
-	
+	markdownHighlightDirty = NSMakeRange(NSNotFound, 0);
+	markdownHighlightCoversAll = YES;
+	markdownHighlightLimit = NSMakeRange(0, 0);
+	plainForegroundDirty = NSMakeRange(NSNotFound, 0);
+
     prefsController = [GlobalPrefs defaultPrefs];
 
     [prefsController registerWithTarget:self forChangesInSettings:
@@ -81,7 +146,14 @@ CGFloat _perceptualDarkness(NSColor*a);
 	 @selector(setSearchTermHighlightColor:sender:),
 	 @selector(setShouldHighlightSearchTerms:sender:), nil];
 	
-    self.managesTextWidth=[prefsController managesTextWidthInWindow];
+	self.managesTextWidth=[prefsController managesTextWidthInWindow];
+	/* The nib springs this view to the scroll view's height. A note is taller
+	   than the window on its own; the scroll view must not pin it back. */
+	[self setVerticallyResizable:YES];
+	[self setAutoresizingMask:([self autoresizingMask] & ~NSViewHeightSizable)];
+	[[self textContainer] setHeightTracksTextView:NO];
+	[[self layoutManager] setBackgroundLayoutEnabled:NO];
+	[self nv_matchVisibleMinHeight];
 	[self setUsesRuler:NO];
 	[self setUsesFontPanel:NO];
 	[self setDrawsBackground:YES];
@@ -96,6 +168,7 @@ CGFloat _perceptualDarkness(NSColor*a);
 	}
 	
 	didRenderFully = NO;
+	automaticFirstVisibleCharIndex = NSNotFound;
 	[[self layoutManager] setDelegate:self];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(noteTextStorageDidProcessEditing:) name:NSTextStorageDidProcessEditingNotification object:[self textStorage]];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(markdownCompletionPreferenceChanged:) name:NSUserDefaultsDidChangeNotification object:nil];
@@ -134,6 +207,7 @@ CGFloat _perceptualDarkness(NSColor*a);
 if ([selectorString isEqualToString:SEL_STR(setNoteBodyFont:sender:)]) {
 
 		[self setTypingAttributes:[prefsController noteBodyAttributes]];
+		[self nv_applyThemeTypingColor];
 		//[textView setFont:[prefsController noteBodyFont]];
 	} else if ([selectorString isEqualToString:SEL_STR(setMakeURLsClickable:sender:)]) {
 		
@@ -152,17 +226,16 @@ if ([selectorString isEqualToString:SEL_STR(setNoteBodyFont:sender:)]) {
 	} else if ([selectorString isEqualToString:SEL_STR(setSearchTermHighlightColor:sender:)] || 
 			   [selectorString isEqualToString:SEL_STR(setShouldHighlightSearchTerms:sender:)]) {
 		
-		if (![prefsController highlightSearchTerms]) {
+		if (![prefsController highlightSearchTerms])
 			[self removeHighlightedTerms];
-		} else {
-			NSString *typedString = [(AppController *)[NSApp delegate] typedString];
-			if (typedString)
-				[self highlightTermsTemporarilyReturningFirstRange:typedString avoidHighlight:NO];
-		}
+		markdownHighlightCoversAll = YES;
+		[self scheduleMarkdownHighlight];
 	}
 }
 
 - (BOOL)becomeFirstResponder {
+	[self nv_allowSelectionScroll];
+	[self discardSearchHighlights];
 	[notesTableView setShouldUseSecondaryHighlightColor:YES];
 
 	if ([[[self window] currentEvent] type] == NSKeyDown && [[[self window] currentEvent] firstCharacter] == '\t') {
@@ -174,6 +247,7 @@ if ([selectorString isEqualToString:SEL_STR(setNoteBodyFont:sender:)]) {
 		}
 	}
 	[self setTypingAttributes:[prefsController noteBodyAttributes]];
+	[self nv_applyThemeTypingColor];
 //    NSLog(@"exist :>%@<",self.defaultParagraphStyle);
 //    [self.textStorage setAttributes:@{NSParagraphStyleAttributeName:[NSParagraphStyle defaultParagraphStyle]} range:NSMakeRange(0, self.string.length)];
 //    NSLog(@"exist :>%@<",self.defaultParagraphStyle);
@@ -208,6 +282,36 @@ if ([selectorString isEqualToString:SEL_STR(setNoteBodyFont:sender:)]) {
 }
 
 - (void)updateTextColors {
+	NVEditorTheme *editorTheme = [[NVThemeManager sharedManager] currentEditorTheme];
+	if (editorTheme) {
+		NSColor *appFG = [(AppController *)[NSApp delegate] foregrndColor];
+		NSColor *appBG = [(AppController *)[NSApp delegate] backgrndColor];
+		NSColor *fgColor = [editorTheme editorForegroundColor] ?: appFG ?: [NSColor textColor];
+		NSColor *bgColor = [editorTheme editorBackgroundColor] ?: appBG ?: [NSColor textBackgroundColor];
+		[self setBackgroundColor:bgColor];
+		[[self enclosingScrollView] setBackgroundColor:bgColor];
+		[[[self enclosingScrollView] contentView] setBackgroundColor:bgColor];
+		[[[self enclosingScrollView] contentView] setDrawsBackground:YES];
+		if (IsLionOrLater && [self textFinderIsVisible])
+			[[self window] invalidateCursorRectsForView:[[self enclosingScrollView] findBarView]];
+		NSColor *caret = [editorTheme editorCaretColor] ?: [self _insertionPointColorForForegroundColor:fgColor backgroundColor:bgColor];
+		NSColor *selection = [editorTheme editorSelectionColor] ?: [self _selectionColorForForegroundColor:fgColor backgroundColor:bgColor];
+		[self setInsertionPointColor:caret];
+		[self setTextColor:fgColor];
+		[self setLinkTextAttributes:[self preferredLinkAttributes]];
+		[self setSelectedTextAttributes:[NSDictionary dictionaryWithObject:selection forKey:NSBackgroundColorAttributeName]];
+		if (completionSelectionColored)
+			[self nv_applyCompletionSelectionColor];
+		[self setTypingAttributes:[prefsController noteBodyAttributes]];
+		[self nv_applyThemeTypingColor];
+		[[self enclosingScrollView] setNeedsDisplay:YES];
+		[self setNeedsDisplay:YES];
+		markdownHighlightCoversAll = YES;
+		[self highlightMarkdownSyntax];
+		if ([[self enclosingScrollView] respondsToSelector:@selector(nv_updateScrollerChrome)])
+			[(ETScrollView *)[self enclosingScrollView] nv_updateScrollerChrome];
+		return;
+	}
 	NSColor *fgColor = [(AppController *)[NSApp delegate] foregrndColor];
 	NSColor *bgColor = [self backgroundColor];
     if (bgColor!=[(AppController *)[NSApp delegate]backgrndColor]) {
@@ -215,6 +319,8 @@ if ([selectorString isEqualToString:SEL_STR(setNoteBodyFont:sender:)]) {
         [self setBackgroundColor:bgColor];
     }
 	[[self enclosingScrollView] setBackgroundColor:bgColor];
+	[[[self enclosingScrollView] contentView] setBackgroundColor:bgColor];
+	[[[self enclosingScrollView] contentView] setDrawsBackground:YES];
     if (IsLionOrLater&&[self textFinderIsVisible]) {
         [[self window]invalidateCursorRectsForView:[[self enclosingScrollView]findBarView]];
     }
@@ -224,14 +330,22 @@ if ([selectorString isEqualToString:SEL_STR(setNoteBodyFont:sender:)]) {
 	//[[self enclosingScrollView] setNeedsDisplay:YES];
     
 	[self setInsertionPointColor:[self _insertionPointColorForForegroundColor:fgColor backgroundColor:bgColor]];
+	if (fgColor)
+		[self setTextColor:fgColor];
 	[self setLinkTextAttributes:[self preferredLinkAttributes]];
 	[self setSelectedTextAttributes:[NSDictionary dictionaryWithObject:[self _selectionColorForForegroundColor:fgColor backgroundColor:bgColor] 
 																forKey:NSBackgroundColorAttributeName]];
+	if (completionSelectionColored)
+		[self nv_applyCompletionSelectionColor];
 	[self setTypingAttributes:[prefsController noteBodyAttributes]];
+	[self nv_applyThemeTypingColor];
     [[self enclosingScrollView]setNeedsDisplay:YES];
 //    [[[self enclosingScrollView]contentView]setNeedsDisplay:YES];
     [self setNeedsDisplay:YES];
+	markdownHighlightCoversAll = YES;
 	[self scheduleMarkdownHighlight];
+	if ([[self enclosingScrollView] respondsToSelector:@selector(nv_updateScrollerChrome)])
+		[(ETScrollView *)[self enclosingScrollView] nv_updateScrollerChrome];
 }
 
 #define _CM(__ch) ((__ch) * 255.0)
@@ -330,10 +444,21 @@ CGFloat _perceptualColorDifference(NSColor*a, NSColor*b) {
 	if (![prefsController URLsAreClickable])
 		return [NSDictionary dictionary];
 	
+	NSColor *fgColor = [(AppController *)[NSApp delegate] foregrndColor];
+	NSColor *bgColor = [(AppController *)[NSApp delegate] backgrndColor];
+	NVEditorTheme *editorTheme = [[NVThemeManager sharedManager] currentEditorTheme];
+	NSColor *linkColor = nil;
+	if (editorTheme) {
+		fgColor = [editorTheme editorForegroundColor] ?: fgColor;
+		bgColor = [editorTheme editorBackgroundColor] ?: bgColor;
+		linkColor = [[editorTheme styleForKey:@"linkParens"] foregroundColor];
+	}
+	if (!linkColor)
+		linkColor = [self _linkColorForForegroundColor:fgColor backgroundColor:bgColor];
 	return [NSDictionary dictionaryWithObjectsAndKeys:
 			[NSCursor pointingHandCursor], NSCursorAttributeName,
 			[NSNumber numberWithInt:NSUnderlineStyleSingle], NSUnderlineStyleAttributeName,
-			[self _linkColorForForegroundColor:[(AppController *)[NSApp delegate] foregrndColor] backgroundColor:[(AppController *)[NSApp delegate] backgrndColor]],
+			linkColor,
 			NSForegroundColorAttributeName, nil];
 	
 	/*
@@ -386,8 +511,69 @@ CGFloat _perceptualColorDifference(NSColor*a, NSColor*b) {
 	return didRenderFully;
 }
 
+- (void)redisplayAfterNoteChange {
+	/* AppKit invalidates glyphs that still exist. A shorter note, such as one
+	   opened from a link, leaves the previous note's tail on screen. */
+	markdownHighlightSuppressed = NO;
+	markdownHighlightCoversAll = YES;
+	markdownHighlightDirty = NSMakeRange(NSNotFound, 0);
+	NSLayoutManager *layout = [self layoutManager];
+	NSUInteger length = [[self string] length];
+	if (layout && length)
+		[layout invalidateDisplayForCharacterRange:NSMakeRange(0, length)];
+	NSRect visible = [self visibleRect];
+	if (NSIsEmptyRect(visible))
+		visible = [self bounds];
+	[self setNeedsDisplayInRect:visible avoidAdditionalLayout:NO];
+	[[[self enclosingScrollView] contentView] setNeedsDisplay:YES];
+}
+
 - (void)layoutManager:(NSLayoutManager *)aLayoutManager didCompleteLayoutForTextContainer:(NSTextContainer *)aTextContainer atEnd:(BOOL)flag {
+	/* A finished container is often only the window tall. Resizing here is
+	   what made the scrollbar vanish again on the way back to a note. */
+	(void)flag;
 	didRenderFully = YES;
+}
+
+static NSColor *NVSearchHighlightInkColor(NSColor *highlight) {
+	static NSColor *blackInk = nil;
+	static NSColor *whiteInk = nil;
+	CGFloat red = 0, green = 0, blue = 0, alpha = 0;
+	NSColor *rgb = [highlight colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+	if (!rgb)
+		return nil;
+	[rgb getRed:&red green:&green blue:&blue alpha:&alpha];
+	if (!blackInk) {
+		blackInk = [[NSColor colorWithSRGBRed:0 green:0 blue:0 alpha:1] retain];
+		whiteInk = [[NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:1] retain];
+	}
+	return NVSearchHighlightLuminance(red, green, blue) <= 0.55 ? whiteInk : blackInk;
+}
+
+- (NSDictionary *)layoutManager:(NSLayoutManager *)layoutManager shouldUseTemporaryAttributes:(NSDictionary *)attrs forDrawingToScreen:(BOOL)toScreen atCharacterIndex:(NSUInteger)charIndex effectiveRange:(NSRangePointer)effectiveCharRange {
+	if (!toScreen)
+		return attrs;
+	if (completionSelectionColored && completionColoredRange.length && NSLocationInRange(charIndex, completionColoredRange)) {
+		NSColor *color = [self nv_themeForegroundColor];
+		if (!color)
+			return attrs;
+		NSMutableDictionary *modified = attrs ? [[attrs mutableCopy] autorelease] : [NSMutableDictionary dictionary];
+		[modified setObject:color forKey:NSForegroundColorAttributeName];
+		if (effectiveCharRange)
+			*effectiveCharRange = NSMakeRange(charIndex, 1);
+		return modified;
+	}
+	/* Ink is chosen only while drawing. Storing it would replace the theme color,
+	   and taking it away when the letters stop matching leaves the default black. */
+	if ([attrs objectForKey:NVSearchHighlightAttributeName]) {
+		NSColor *ink = NVSearchHighlightInkColor([attrs objectForKey:NSBackgroundColorAttributeName]);
+		if (!ink)
+			return attrs;
+		NSMutableDictionary *modified = [[attrs mutableCopy] autorelease];
+		[modified setObject:ink forKey:NSForegroundColorAttributeName];
+		return modified;
+	}
+	return attrs;
 }
 - (void)layoutManagerDidInvalidateLayout:(NSLayoutManager *)aLayoutManager {
 	didRenderFully = NO;	
@@ -509,12 +695,12 @@ CGFloat _perceptualColorDifference(NSColor*a, NSColor*b) {
 					goto copyRTFType;
 			}
 #if COPY_PASTE_DEBUG
-			NSLog(@"false alarm: no real styles");
+			NVLogInfo(@"false alarm: no real styles");
 #endif
 			
 		} else {
 #if COPY_PASTE_DEBUG
-			NSLog(@"homogeneous style");
+			NVLogInfo(@"homogeneous style");
 #endif
 		}
 		
@@ -522,7 +708,7 @@ CGFloat _perceptualColorDifference(NSColor*a, NSColor*b) {
 copyRTFType:
 			//we have more than a single styling segment within the selection--grudgingly allow regular RTF copying
 #if COPY_PASTE_DEBUG
-			NSLog(@"copying RTF due to multiple attributes");
+			NVLogInfo(@"copying RTF due to multiple attributes");
 			[[self layoutManager] addTemporaryAttributes:[prefsController searchTermHighlightAttributes] forCharacterRange:effectiveRange];
 #endif
 			[types insertObject:NSRTFPboardType atIndex:1];
@@ -549,7 +735,7 @@ copyRTFType:
 
 - (void)bold:(id)sender {	
     if ([[NSUserDefaults standardUserDefaults]boolForKey:@"UsesMarkdownCompletions"]) {
-        [self changeMarkdownAttribute:@"**"];
+        [self changeMarkdownAttribute:[prefsController markdownBoldMarker]];
     }else{
         [self applyStyleOfTrait:NSBoldFontMask alternateAttributeName:NSStrokeWidthAttributeName 
         alternateAttributeValue:[NSNumber numberWithFloat:(float)STROKE_WIDTH_FOR_BOLD]];
@@ -559,7 +745,7 @@ copyRTFType:
 
 - (void)italic:(id)sender {
     if ([[NSUserDefaults standardUserDefaults]boolForKey:@"UsesMarkdownCompletions"]) {
-        [self changeMarkdownAttribute:@"*"];
+        [self changeMarkdownAttribute:[prefsController markdownItalicMarker]];
     }else{
         [self applyStyleOfTrait:NSItalicFontMask alternateAttributeName:NSObliquenessAttributeName 
         alternateAttributeValue:[NSNumber numberWithFloat:(float)OBLIQUENESS_FOR_ITALIC]];
@@ -618,12 +804,208 @@ copyRTFType:
 	[[self layoutManager] removeTemporaryAttribute:NSBackgroundColorAttributeName forCharacterRange:NSMakeRange(0, [[self string] length])];
 }
 
+static BOOL NVHighlightComponentsMatch(CGFloat a, CGFloat b) {
+	CGFloat delta = a - b;
+	if (delta < 0)
+		delta = -delta;
+	return delta < 0.02f;
+}
+
+static BOOL NVSearchHighlightColorMatches(NSColor *applied, NSColor *searchColor) {
+	if (applied == searchColor)
+		return YES;
+	if (!applied || !searchColor)
+		return NO;
+	NSColor *appliedRGB = [applied colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+	NSColor *searchRGB = [searchColor colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+	if (!appliedRGB || !searchRGB)
+		return [applied isEqual:searchColor];
+	return NVHighlightComponentsMatch([appliedRGB redComponent], [searchRGB redComponent]) &&
+		NVHighlightComponentsMatch([appliedRGB greenComponent], [searchRGB greenComponent]) &&
+		NVHighlightComponentsMatch([appliedRGB blueComponent], [searchRGB blueComponent]) &&
+		NVHighlightComponentsMatch([appliedRGB alphaComponent], [searchRGB alphaComponent]);
+}
+
+- (NSDictionary *)nv_searchHighlightAttributes {
+	NSDictionary *base = [prefsController searchTermHighlightAttributes];
+	if (!base)
+		return nil;
+	NSMutableDictionary *attributes = [[base mutableCopy] autorelease];
+	[attributes removeObjectForKey:NSForegroundColorAttributeName];
+	[attributes setObject:[NSNumber numberWithBool:YES] forKey:NVSearchHighlightAttributeName];
+	return attributes;
+}
+
+- (NVSearchHighlightOverlay *)nv_searchHighlightOverlayCreating:(BOOL)create {
+	NVSearchHighlightOverlay *overlay = nil;
+	NSArray *subviews = [self subviews];
+	NSUInteger i;
+	for (i = 0; i < [subviews count]; i++) {
+		NSView *view = [subviews objectAtIndex:i];
+		if ([view isKindOfClass:[NVSearchHighlightOverlay class]])
+			overlay = (NVSearchHighlightOverlay *)view;
+	}
+	if (!overlay && create) {
+		overlay = [[NVSearchHighlightOverlay alloc] initWithFrame:[self bounds]];
+		[overlay setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+		[self addSubview:overlay];
+		[overlay release];
+	}
+	if (overlay && !NSEqualRects([overlay frame], [self bounds]))
+		[overlay setFrame:[self bounds]];
+	return overlay;
+}
+
+- (void)nv_displaySearchHighlights {
+	NVSearchHighlightOverlay *overlay = [self nv_searchHighlightOverlayCreating:YES];
+	[overlay setNeedsDisplay:YES];
+}
+
+- (void)didAddSubview:(NSView *)subview {
+	[super didAddSubview:subview];
+	if ([subview isKindOfClass:[NVSearchHighlightOverlay class]])
+		return;
+	NVSearchHighlightOverlay *overlay = [self nv_searchHighlightOverlayCreating:NO];
+	if (overlay)
+		[self addSubview:overlay];
+}
+
+- (void)setBoundsOrigin:(NSPoint)newOrigin {
+	[super setBoundsOrigin:newOrigin];
+	NVSearchHighlightOverlay *overlay = [self nv_searchHighlightOverlayCreating:NO];
+	if (overlay)
+		[overlay setFrame:[self bounds]];
+}
+
+- (void)setFrameSize:(NSSize)newSize {
+	/* AppKit offers the window height while switching notes. Taking it hides
+	   the scrollbar for a note that is already taller than the window. */
+	newSize.height = NVNoteHeightForProposedHeight(self, newSize.height);
+	[super setFrameSize:newSize];
+	NVSearchHighlightOverlay *overlay = [self nv_searchHighlightOverlayCreating:NO];
+	if (overlay)
+		[overlay setFrame:[self bounds]];
+}
+
+- (void)setConstrainedFrameSize:(NSSize)size {
+	size.height = NVNoteHeightForProposedHeight(self, size.height);
+	[super setConstrainedFrameSize:size];
+}
+
+- (void)nv_fillSearchHighlightRange:(NSRange)slice color:(NSColor *)color inOverlay:(NSView *)overlay {
+	NSLayoutManager *layout = [self layoutManager];
+	NSTextContainer *container = [self textContainer];
+	if (!layout || !container || !overlay || !slice.length || !color)
+		return;
+	NSRange glyphs = [layout glyphRangeForCharacterRange:slice actualCharacterRange:NULL];
+	if (!glyphs.length)
+		return;
+	NSPoint containerOrigin = [self textContainerOrigin];
+	NSPoint frameOrigin = [overlay frame].origin;
+	NSPoint origin = NSMakePoint(containerOrigin.x - frameOrigin.x, containerOrigin.y - frameOrigin.y);
+	NSRect rect = [layout boundingRectForGlyphRange:glyphs inTextContainer:container];
+	rect.origin.x += origin.x;
+	rect.origin.y += origin.y;
+	[color setFill];
+	NSRectFillUsingOperation(rect, NSCompositingOperationSourceOver);
+	[layout drawGlyphsForGlyphRange:glyphs atPoint:origin];
+}
+
+- (void)nv_paintSearchHighlightSlice:(NSRange)slice avoidingRange:(NSRange)selected color:(NSColor *)color inOverlay:(NSView *)overlay {
+	if (!slice.length)
+		return;
+	if (selected.length && selected.location != NSNotFound) {
+		NSRange overlap = NSIntersectionRange(slice, selected);
+		if (overlap.length) {
+			if (overlap.location > slice.location)
+				[self nv_fillSearchHighlightRange:NSMakeRange(slice.location, overlap.location - slice.location) color:color inOverlay:overlay];
+			if (NSMaxRange(overlap) < NSMaxRange(slice))
+				[self nv_fillSearchHighlightRange:NSMakeRange(NSMaxRange(overlap), NSMaxRange(slice) - NSMaxRange(overlap)) color:color inOverlay:overlay];
+			return;
+		}
+	}
+	[self nv_fillSearchHighlightRange:slice color:color inOverlay:overlay];
+}
+
+- (void)nv_drawSearchHighlightsInOverlay:(NSView *)overlay dirtyRect:(NSRect)dirtyRect {
+	if (!prefsController || ![prefsController highlightSearchTerms])
+		return;
+	NSLayoutManager *layout = [self layoutManager];
+	NSTextContainer *container = [self textContainer];
+	if (!layout || !container)
+		return;
+	NSPoint frameOrigin = [overlay frame].origin;
+	NSPoint containerOrigin = [self textContainerOrigin];
+	NSRect containerRect = dirtyRect;
+	containerRect.origin.x += frameOrigin.x - containerOrigin.x;
+	containerRect.origin.y += frameOrigin.y - containerOrigin.y;
+	containerRect = NSInsetRect(containerRect, -4.0, -4.0);
+	NSRange glyphs = [layout glyphRangeForBoundingRect:containerRect inTextContainer:container];
+	if (!glyphs.length)
+		return;
+	NSRange chars = [layout characterRangeForGlyphRange:glyphs actualGlyphRange:NULL];
+	NSRange selected = [self selectedRange];
+	NSUInteger index = chars.location;
+	NSUInteger end = NSMaxRange(chars);
+	while (index < end) {
+		NSRange effective = NSMakeRange(0, 0);
+		NSDictionary *attributes = [layout temporaryAttributesAtCharacterIndex:index effectiveRange:&effective];
+		NSRange slice = NSIntersectionRange(effective, chars);
+		NSColor *color = [attributes objectForKey:NSBackgroundColorAttributeName];
+		if (slice.length && [attributes objectForKey:NVSearchHighlightAttributeName] && color)
+			[self nv_paintSearchHighlightSlice:slice avoidingRange:selected color:color inOverlay:overlay];
+		NSUInteger next = NSMaxRange(effective);
+		if (next <= index)
+			break;
+		index = next;
+	}
+}
+
+- (void)removeSearchTermHighlights {
+	NSColor *searchColor = [[prefsController searchTermHighlightAttributes] objectForKey:NSBackgroundColorAttributeName];
+	NSLayoutManager *layout = [self layoutManager];
+	NSUInteger length = [[self string] length];
+	if (!searchColor || !layout || !length)
+		return;
+	NSUInteger index = 0;
+	while (index < length) {
+		NSRange effective = NSMakeRange(0, 0);
+		NSDictionary *attrs = [layout temporaryAttributesAtCharacterIndex:index effectiveRange:&effective];
+		if (!effective.length)
+			break;
+		NSColor *background = [attrs objectForKey:NSBackgroundColorAttributeName];
+		if ([attrs objectForKey:NVSearchHighlightAttributeName] || NVSearchHighlightColorMatches(background, searchColor)) {
+			[layout removeTemporaryAttribute:NSBackgroundColorAttributeName forCharacterRange:effective];
+			[layout removeTemporaryAttribute:NVSearchHighlightAttributeName forCharacterRange:effective];
+		}
+		NSUInteger next = NSMaxRange(effective);
+		if (next <= index)
+			break;
+		index = next;
+	}
+	[self nv_displaySearchHighlights];
+}
+
+- (void)discardSearchHighlights {
+	NSLayoutManager *layout = [self layoutManager];
+	NSUInteger length = [[self string] length];
+	if (layout && length) {
+		NSRange all = NSMakeRange(0, length);
+		[layout removeTemporaryAttribute:NSBackgroundColorAttributeName forCharacterRange:all];
+		[layout removeTemporaryAttribute:NVSearchHighlightAttributeName forCharacterRange:all];
+	}
+	[self nv_displaySearchHighlights];
+	/* Background colors for the whole note were just removed. */
+	markdownHighlightCoversAll = YES;
+	[self scheduleMarkdownHighlight];
+}
+
 
 //use with rangesOfWordsInString:(NSString*)findString earliestRange:(NSRange*)aRange inRange:
 - (void)highlightRangesTemporarily:(CFArrayRef)ranges {
 	CFIndex rangeIndex;
 	long bodyLength = (long)[[self string] length];
-	NSDictionary *highlightDict = [prefsController searchTermHighlightAttributes];
+	NSDictionary *highlightDict = [self nv_searchHighlightAttributes];
 	
 	for (rangeIndex = 0; rangeIndex < CFArrayGetCount(ranges); rangeIndex++) {
 		CFRange *range = (CFRange *)CFArrayGetValueAtIndex(ranges, rangeIndex);
@@ -631,55 +1013,66 @@ copyRTFType:
 		if (range && range->length > 0 && range->location + range->length <= bodyLength) {
 			[[self layoutManager] addTemporaryAttributes:highlightDict forCharacterRange:*(NSRange*)range];
 		} else {
-			NSLog(@"highlightRangesTemporarily: Invalid range (%@)", range ? NSStringFromRange(*(NSRange*)range) : @"null");
+			NVLogWarning(@"highlightRangesTemporarily: Invalid range (%@)", range ? NSStringFromRange(*(NSRange*)range) : @"null");
 		}
 	}
+	[self nv_displaySearchHighlights];
 }
 
-- (NSRange)highlightTermsTemporarilyReturningFirstRange:(NSString*)typedString avoidHighlight:(BOOL)noHighlight {
-	
-	//if lengths of respective UTF8-string equivalents for contentString are the same, we should revert to cstring-based algorithm
-	
+- (NSArray*)rangesOfSearchTerms:(NSString*)typedString {
+	//every place a term of the search appears in the body, in order of position; quoted searches are one term
+	NSMutableArray *result = [NSMutableArray array];
 	CFStringRef quoteStr = CFSTR("\"");
-	NSRange firstRange = NSMakeRange(NSNotFound,0);
 	CFRange quoteRange = CFStringFind((CFStringRef)typedString, quoteStr, 0);
 	CFArrayRef terms = CFStringCreateArrayBySeparatingStrings(NULL, (CFStringRef)typedString, 
 															  quoteRange.location == kCFNotFound ? CFSTR(" ") : quoteStr);
 	if (terms) {
 		CFIndex termIndex, rangeIndex;
 		CFStringRef bodyString = (CFStringRef)[self string];
-		NSDictionary *highlightDict = [prefsController searchTermHighlightAttributes];
+		CFIndex bodyLength = CFStringGetLength(bodyString);
 		
 		for (termIndex = 0; termIndex < CFArrayGetCount(terms); termIndex++) {
 			CFStringRef term = CFArrayGetValueAtIndex(terms, termIndex);
-			if (CFStringGetLength(term) > 0) {
-				CFArrayRef ranges = CFStringCreateArrayWithFindResults(NULL, bodyString, term, CFRangeMake(0, CFStringGetLength(bodyString)),
+			NSString *trimmedTerm = NVStringByTrimmingHighlightTerm((NSString *)term);
+			if ([trimmedTerm length] > 0) {
+				CFArrayRef ranges = CFStringCreateArrayWithFindResults(NULL, bodyString, (CFStringRef)trimmedTerm, CFRangeMake(0, bodyLength),
 																	   kCFCompareCaseInsensitive);
 				if (!ranges)
 					continue;
 				for (rangeIndex = 0; rangeIndex < CFArrayGetCount(ranges); rangeIndex++) {
 					CFRange *range = (CFRange *)CFArrayGetValueAtIndex(ranges, rangeIndex);
-					
-					if (range && range->length > 0 && range->location + range->length <= CFStringGetLength(bodyString)) {
-						if (firstRange.location > (NSUInteger)range->location) {
-							firstRange = *(NSRange*)range;
-							if (noHighlight) {
-								CFRelease(ranges);
-								goto returnEarly;
-							}
-						}
-						[[self layoutManager] addTemporaryAttributes:highlightDict forCharacterRange:*(NSRange*)range];
-					} else {
-						NSLog(@"highlightTermsTemporarily: Invalid range (%@)", range ? NSStringFromRange(*(NSRange*)range) : @"?");
-					}
+					if (range && range->length > 0 && range->location + range->length <= bodyLength)
+						[result addObject:[NSValue valueWithRange:NSMakeRange((NSUInteger)range->location, (NSUInteger)range->length)]];
+					else
+						NVLogWarning(@"rangesOfSearchTerms: Invalid range (%@)", range ? NSStringFromRange(*(NSRange*)range) : @"?");
 				}
 				CFRelease(ranges);
 			}
 		}
-	returnEarly:
 		CFRelease(terms);
 	}
-	return (firstRange);
+	[result sortUsingComparator:^NSComparisonResult(NSValue *a, NSValue *b) {
+		NSUInteger la = [a rangeValue].location, lb = [b rangeValue].location;
+		return la < lb ? NSOrderedAscending : (la > lb ? NSOrderedDescending : NSOrderedSame);
+	}];
+	return result;
+}
+
+- (NSArray*)highlightTermsTemporarily:(NSString*)typedString avoidHighlight:(BOOL)noHighlight {
+	NSArray *ranges = [self rangesOfSearchTerms:typedString];
+	if (!noHighlight) {
+		NSDictionary *highlightDict = [self nv_searchHighlightAttributes];
+		NSValue *value;
+		for (value in ranges)
+			[[self layoutManager] addTemporaryAttributes:highlightDict forCharacterRange:[value rangeValue]];
+	}
+	[self nv_displaySearchHighlights];
+	return ranges;
+}
+
+- (NSRange)highlightTermsTemporarilyReturningFirstRange:(NSString*)typedString avoidHighlight:(BOOL)noHighlight {
+	NSArray *ranges = [self highlightTermsTemporarily:typedString avoidHighlight:noHighlight];
+	return [ranges count] ? [[ranges objectAtIndex:0] rangeValue] : NSMakeRange(NSNotFound, 0);
 }
 
 - (NSRange)selectionRangeForProposedRange:(NSRange)proposedSelRange granularity:(NSSelectionGranularity)granularity {
@@ -765,16 +1158,54 @@ copyRTFType:
 }
 
 - (void)setAutomaticallySelectedRange:(NSRange)newRange {
+	/* The selection a note is shown with must not move the view: the saved
+	   scroll position is applied around it. The text view scrolls to a new
+	   caret on its own, sometimes on a later layout pass, so a scroll that
+	   happens now is put back at once and one that comes later is ignored
+	   until the user does something or the next pass of the run loop. */
+	NSScrollView *scroll = [self enclosingScrollView];
+	NSClipView *clip = [scroll contentView];
+	NSPoint origin = [clip bounds].origin;
 	lastAutomaticallySelectedRange = newRange;
 	didChangeIntoAutomaticRange = NO;
+	selectionScrollSuppressed = YES;
+	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(nv_allowSelectionScroll) object:nil];
 	[self setSelectedRange:newRange];
+	if (clip && !NSEqualPoints([clip bounds].origin, origin)) {
+		[clip scrollToPoint:origin];
+		[scroll reflectScrolledClipView:clip];
+	}
+	[self performSelector:@selector(nv_allowSelectionScroll) withObject:nil afterDelay:0.0];
+}
+
+- (void)nv_allowSelectionScroll {
+	selectionScrollSuppressed = NO;
+}
+
+- (void)scrollRangeToVisible:(NSRange)range {
+	if (selectionScrollSuppressed)
+		return;
+	[super scrollRangeToVisible:range];
+}
+
+- (NSUInteger)firstVisibleCharIndexWasAutomatic:(BOOL*)automatic {
+	//the top line on screen, and whether it is still where the note was put when shown rather than where the user scrolled
+	NSUInteger charIndex = NVFirstVisibleCharIndex(self);
+	if (automatic) {
+		*automatic = charIndex == automaticFirstVisibleCharIndex;
+	}
+	return charIndex;
+}
+
+- (void)markScrollPositionAutomatic {
+	automaticFirstVisibleCharIndex = NVFirstVisibleCharIndex(self);
 }
 
 static NSRegularExpression *NVMarkdownRegex(NSString *pattern) {
 	NSError *error = nil;
 	NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:pattern options:NSRegularExpressionAnchorsMatchLines error:&error];
 	if (!regex)
-		NSLog(@"nvALT markdown highlight: %@", error);
+		NVLogInfo(@"nvALT markdown highlight: %@", error);
 	return regex;
 }
 
@@ -794,11 +1225,41 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
 	[self performSelector:@selector(highlightMarkdownSyntax) withObject:nil afterDelay:0.03];
 }
 
-- (void)noteTextStorageDidProcessEditing:(NSNotification *)note {
-	if (![NSThread isMainThread]) {
-		[self performSelectorOnMainThread:@selector(scheduleMarkdownHighlight) withObject:nil waitUntilDone:NO];
+- (void)scheduleFullMarkdownHighlight {
+	markdownHighlightCoversAll = YES;
+	[self scheduleMarkdownHighlight];
+}
+
+- (void)noteMarkdownHighlightEdit:(NSRange)edited change:(NSInteger)change {
+	if (markdownHighlightCoversAll)
+		return;
+	NSUInteger length = [[self string] length];
+	if (edited.location != NSNotFound && edited.location == 0 && edited.length == length && length > 4096) {
+		markdownHighlightCoversAll = YES;
+		markdownHighlightDirty = NSMakeRange(NSNotFound, 0);
 		return;
 	}
+	markdownHighlightDirty = NVMarkdownHighlightUnionEdit(markdownHighlightDirty, edited, change, length);
+}
+
+- (void)noteTextStorageDidProcessEditing:(NSNotification *)note {
+	if (![NSThread isMainThread]) {
+		[self performSelectorOnMainThread:@selector(scheduleFullMarkdownHighlight) withObject:nil waitUntilDone:NO];
+		return;
+	}
+	NSTextStorage *storage = [note object];
+	/* The layout manager drops temporary attributes set inside this notification.
+	   Apply the theme color on the next turn, after the edit has settled, and
+	   do not schedule a highlight: that pass lays the whole note out. */
+	if (!NVMarkdownSyntaxHighlightEnabledForLength([storage length])) {
+		NSRange edited = [storage editedRange];
+		markdownHighlightSuppressed = YES;
+		if (edited.location == 0 && edited.length == [storage length])
+			plainForegroundDirty = NSMakeRange(NSNotFound, 0);
+		[self schedulePlainForegroundForRange:edited change:[storage changeInLength]];
+		return;
+	}
+	[self noteMarkdownHighlightEdit:[storage editedRange] change:[storage changeInLength]];
 	[self scheduleMarkdownHighlight];
 }
 
@@ -810,7 +1271,18 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
 		return;
 	haveCached = YES;
 	cached = enabled;
+	markdownHighlightCoversAll = YES;
 	[self scheduleMarkdownHighlight];
+}
+
+- (NSRange)activeMarkdownHighlightRange {
+	NSUInteger length = [[self string] length];
+	NSRange limit = markdownHighlightLimit;
+	if (limit.location > length)
+		return NSMakeRange(0, length);
+	if (NSMaxRange(limit) > length)
+		limit.length = length - limit.location;
+	return limit;
 }
 
 - (void)paintMarkdownRange:(NSRange)range color:(NSColor *)color strikethrough:(BOOL)strikethrough {
@@ -837,7 +1309,7 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
 - (void)paintMarkdownMatches:(NSRegularExpression *)regex string:(NSString *)string content:(NSColor *)content marker:(NSColor *)marker contentGroup:(NSInteger)contentGroup delimiterGroup:(NSInteger)delimiterGroup hasCloser:(BOOL)hasCloser strikethrough:(BOOL)strikethrough {
 	if (!regex)
 		return;
-	[regex enumerateMatchesInString:string options:0 range:NSMakeRange(0, [string length]) usingBlock:^(NSTextCheckingResult *result, NSMatchingFlags flags, BOOL *stop) {
+	[regex enumerateMatchesInString:string options:0 range:[self activeMarkdownHighlightRange] usingBlock:^(NSTextCheckingResult *result, NSMatchingFlags flags, BOOL *stop) {
 		NSRange whole = [result range];
 		[self paintMarkdownRange:whole color:marker strikethrough:NO];
 		if (contentGroup > 0 && (NSInteger)[result numberOfRanges] > contentGroup) {
@@ -860,8 +1332,9 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
 }
 
 - (void)highlightFencedCodeInString:(NSString *)string code:(NSColor *)code marker:(NSColor *)marker {
-	NSUInteger length = [string length];
-	NSUInteger index = 0;
+	NSRange limit = [self activeMarkdownHighlightRange];
+	NSUInteger length = NSMaxRange(limit);
+	NSUInteger index = limit.location;
 	while (index < length) {
 		NSRange lineRange = [string lineRangeForRange:NSMakeRange(index, 0)];
 		NSString *trimmed = [[string substringWithRange:lineRange] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -896,16 +1369,421 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
 	}
 }
 
-- (void)highlightMarkdownSyntax {
+- (void)reapplySearchHighlights {
+	if (![prefsController highlightSearchTerms])
+		return;
+	NSString *typed = [(AppController *)[NSApp delegate] searchStringForHighlighting];
+	[self removeSearchTermHighlights];
+	if ([typed length])
+		[self highlightTermsTemporarilyReturningFirstRange:typed avoidHighlight:NO];
+}
+
+- (void)cancelOperation:(id)sender {
+	[[NSApp delegate] cancelOperation:sender];
+}
+
+- (void)paintThemeRange:(NSRange)range style:(NVThemeStyle *)style baseFont:(NSFont *)baseFont useBaseFont:(BOOL)useBaseFont forceStrikethrough:(BOOL)forceStrikethrough {
+	[self paintThemeRange:range style:style baseFont:baseFont useBaseFont:useBaseFont forceStrikethrough:forceStrikethrough forceUnderline:NO];
+}
+
+- (void)paintThemeRange:(NSRange)range style:(NVThemeStyle *)style baseFont:(NSFont *)baseFont useBaseFont:(BOOL)useBaseFont forceStrikethrough:(BOOL)forceStrikethrough forceUnderline:(BOOL)forceUnderline {
+	NSString *string = [self string];
+	if (range.length == 0 || range.location == NSNotFound || NSMaxRange(range) > [string length])
+		return;
+	NSMutableDictionary *attrs = [NSMutableDictionary dictionary];
+	NSColor *foreground = [style foregroundColor];
+	NSColor *background = [style backgroundColor];
+	if (foreground)
+		[attrs setObject:foreground forKey:NSForegroundColorAttributeName];
+	if (background)
+		[attrs setObject:background forKey:NSBackgroundColorAttributeName];
+	NSFont *font = [style fontBasedOnFont:baseFont];
+	if (!font && useBaseFont && baseFont)
+		font = baseFont;
+	if (font)
+		[attrs setObject:font forKey:NSFontAttributeName];
+	if (forceStrikethrough || [style isStrikethrough])
+		[attrs setObject:[NSNumber numberWithInteger:NSUnderlineStyleSingle] forKey:NSStrikethroughStyleAttributeName];
+	if (forceUnderline)
+		[attrs setObject:[NSNumber numberWithInteger:NSUnderlineStyleSingle] forKey:NSUnderlineStyleAttributeName];
+	if (![attrs count])
+		return;
+	NSTextStorage *storage = [self textStorage];
+	NSLayoutManager *layout = [self layoutManager];
+	NSUInteger index = range.location;
+	NSUInteger end = NSMaxRange(range);
+	while (index < end) {
+		NSRange effective = NSMakeRange(0, 0);
+		id link = [storage attribute:NSLinkAttributeName atIndex:index longestEffectiveRange:&effective inRange:NSMakeRange(0, [string length])];
+		NSRange slice = NSIntersectionRange(range, effective);
+		if (slice.length && !link)
+			[layout addTemporaryAttributes:attrs forCharacterRange:slice];
+		if (NSMaxRange(effective) <= index)
+			break;
+		index = NSMaxRange(effective);
+	}
+}
+
+- (void)paintThemeMatches:(NSRegularExpression *)regex string:(NSString *)string content:(NVThemeStyle *)content marker:(NVThemeStyle *)marker baseFont:(NSFont *)baseFont contentGroup:(NSInteger)contentGroup delimiterGroup:(NSInteger)delimiterGroup hasCloser:(BOOL)hasCloser forceStrikethrough:(BOOL)forceStrikethrough {
+	if (!regex)
+		return;
+	[regex enumerateMatchesInString:string options:0 range:[self activeMarkdownHighlightRange] usingBlock:^(NSTextCheckingResult *result, NSMatchingFlags flags, BOOL *stop) {
+		NSRange whole = [result range];
+		[self paintThemeRange:whole style:content baseFont:baseFont useBaseFont:NO forceStrikethrough:forceStrikethrough];
+		if (delimiterGroup > 0 && (NSInteger)[result numberOfRanges] > delimiterGroup) {
+			NSRange opener = [result rangeAtIndex:(NSUInteger)delimiterGroup];
+			if (opener.location != NSNotFound && opener.length) {
+				[self paintThemeRange:opener style:marker baseFont:baseFont useBaseFont:YES forceStrikethrough:NO];
+				if (hasCloser && whole.length >= opener.length * 2) {
+					NSRange closer = NSMakeRange(NSMaxRange(whole) - opener.length, opener.length);
+					if (closer.location >= NSMaxRange(opener))
+						[self paintThemeRange:closer style:marker baseFont:baseFont useBaseFont:YES forceStrikethrough:NO];
+				}
+			}
+		}
+		if (contentGroup > 0 && (NSInteger)[result numberOfRanges] > contentGroup) {
+			NSRange inside = [result rangeAtIndex:(NSUInteger)contentGroup];
+			if (inside.location != NSNotFound && inside.length)
+				[self paintThemeRange:inside style:content baseFont:baseFont useBaseFont:NO forceStrikethrough:forceStrikethrough];
+		}
+	}];
+}
+
+- (void)highlightThemedFencedCodeInString:(NSString *)string code:(NVThemeStyle *)code marker:(NVThemeStyle *)marker baseFont:(NSFont *)baseFont {
+	NSRange limit = [self activeMarkdownHighlightRange];
+	NSUInteger length = NSMaxRange(limit);
+	NSUInteger index = limit.location;
+	while (index < length) {
+		NSRange lineRange = [string lineRangeForRange:NSMakeRange(index, 0)];
+		NSString *trimmed = [[string substringWithRange:lineRange] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+		BOOL backtick = [trimmed hasPrefix:@"```"];
+		BOOL tilde = [trimmed hasPrefix:@"~~~"];
+		if (!backtick && !tilde) {
+			index = NSMaxRange(lineRange);
+			continue;
+		}
+		NSString *fence = backtick ? @"```" : @"~~~";
+		NSRange openLine = lineRange;
+		NSUInteger scan = NSMaxRange(lineRange);
+		BOOL closed = NO;
+		while (scan < length) {
+			NSRange nextLine = [string lineRangeForRange:NSMakeRange(scan, 0)];
+			NSString *nextTrimmed = [[string substringWithRange:nextLine] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+			scan = NSMaxRange(nextLine);
+			if ([nextTrimmed hasPrefix:fence]) {
+				[self paintThemeRange:NSMakeRange(openLine.location, scan - openLine.location) style:code baseFont:baseFont useBaseFont:NO forceStrikethrough:NO];
+				[self paintThemeRange:openLine style:marker baseFont:baseFont useBaseFont:YES forceStrikethrough:NO];
+				[self paintThemeRange:nextLine style:marker baseFont:baseFont useBaseFont:YES forceStrikethrough:NO];
+				closed = YES;
+				break;
+			}
+		}
+		if (!closed) {
+			[self paintThemeRange:NSMakeRange(openLine.location, length - openLine.location) style:code baseFont:baseFont useBaseFont:NO forceStrikethrough:NO];
+			[self paintThemeRange:openLine style:marker baseFont:baseFont useBaseFont:YES forceStrikethrough:NO];
+			return;
+		}
+		index = scan;
+	}
+}
+
+- (void)highlightCompleteReferenceLinksInString:(NSString *)string style:(NVThemeStyle *)style baseFont:(NSFont *)baseFont {
+	if (!style)
+		return;
+	NSArray *ranges = NVCompleteReferenceLinkRanges(string);
+	NSUInteger i;
+	for (i = 0; i < [ranges count]; i++)
+		[self paintThemeRange:[[ranges objectAtIndex:i] rangeValue] style:style baseFont:baseFont useBaseFont:NO forceStrikethrough:NO];
+}
+
+- (void)highlightCompleteReferenceLinksInString:(NSString *)string color:(NSColor *)color {
+	if (!color)
+		return;
+	NSArray *ranges = NVCompleteReferenceLinkRanges(string);
+	NSUInteger i;
+	for (i = 0; i < [ranges count]; i++)
+		[self paintMarkdownRange:[[ranges objectAtIndex:i] rangeValue] color:color strikethrough:NO];
+}
+
+- (void)highlightMarkedSpansInString:(NSString *)string style:(NVThemeStyle *)style marker:(NVThemeStyle *)marker baseFont:(NSFont *)baseFont {
+	NSArray *spans = NVMarkdownHighlightSpansInRange(string, [self activeMarkdownHighlightRange]);
+	NSUInteger index;
+	for (index = 0; index < [spans count]; index++) {
+		NSDictionary *span = [spans objectAtIndex:index];
+		[self paintThemeRange:[[span objectForKey:@"content"] rangeValue] style:style baseFont:baseFont useBaseFont:NO forceStrikethrough:NO];
+		[self paintThemeRange:[[span objectForKey:@"opener"] rangeValue] style:marker baseFont:baseFont useBaseFont:YES forceStrikethrough:NO];
+		[self paintThemeRange:[[span objectForKey:@"closer"] rangeValue] style:marker baseFont:baseFont useBaseFont:YES forceStrikethrough:NO];
+	}
+}
+
+- (void)highlightCriticMarkupInString:(NSString *)string addition:(NVThemeStyle *)addition deletion:(NVThemeStyle *)deletion highlight:(NVThemeStyle *)highlight comment:(NVThemeStyle *)comment substitutionMarker:(NVThemeStyle *)substitutionMarker marker:(NVThemeStyle *)marker baseFont:(NSFont *)baseFont {
+	NSArray *spans = NVCriticMarkupSpansInRange(string, [self activeMarkdownHighlightRange]);
+	NSLayoutManager *layout = [self layoutManager];
+	NSUInteger index;
+	for (index = 0; index < [spans count]; index++) {
+		NSDictionary *span = [spans objectAtIndex:index];
+		NSString *type = [span objectForKey:@"type"];
+		NSRange opener = [[span objectForKey:@"opener"] rangeValue];
+		NSRange closer = [[span objectForKey:@"closer"] rangeValue];
+		NSRange content = [[span objectForKey:@"content"] rangeValue];
+		NSRange whole = NSMakeRange(opener.location, NSMaxRange(closer) - opener.location);
+		if (layout && whole.length) {
+			[layout removeTemporaryAttribute:NSStrikethroughStyleAttributeName forCharacterRange:whole];
+			[layout removeTemporaryAttribute:NSUnderlineStyleAttributeName forCharacterRange:whole];
+		}
+		NSValue *oldValue = [span objectForKey:@"old"];
+		NSValue *separatorValue = [span objectForKey:@"separator"];
+		if ([type isEqualToString:@"substitution"] && oldValue) {
+			[self paintThemeRange:[oldValue rangeValue] style:deletion baseFont:baseFont useBaseFont:NO forceStrikethrough:YES forceUnderline:NO];
+			[self paintThemeRange:content style:addition baseFont:baseFont useBaseFont:NO forceStrikethrough:NO forceUnderline:YES];
+			if (separatorValue)
+				[self paintThemeRange:[separatorValue rangeValue] style:(substitutionMarker ?: marker) baseFont:baseFont useBaseFont:YES forceStrikethrough:NO forceUnderline:NO];
+		} else {
+			NVThemeStyle *style = addition;
+			BOOL strike = NVCriticKindStrikethrough(type);
+			BOOL underline = NVCriticKindUnderline(type);
+			if ([type isEqualToString:@"deletion"])
+				style = deletion;
+			else if ([type isEqualToString:@"highlight"])
+				style = highlight;
+			else if ([type isEqualToString:@"comment"])
+				style = comment;
+			else if ([type isEqualToString:@"substitution"])
+				underline = YES;
+			[self paintThemeRange:content style:style baseFont:baseFont useBaseFont:NO forceStrikethrough:strike forceUnderline:underline];
+		}
+		NVThemeStyle *markStyle = ([type isEqualToString:@"substitution"] && substitutionMarker) ? substitutionMarker : marker;
+		[self paintThemeRange:opener style:markStyle baseFont:baseFont useBaseFont:YES forceStrikethrough:NO forceUnderline:NO];
+		[self paintThemeRange:closer style:markStyle baseFont:baseFont useBaseFont:YES forceStrikethrough:NO forceUnderline:NO];
+	}
+}
+
+- (void)highlightMarkdownSyntaxWithTheme:(NVEditorTheme *)theme {
 	NSLayoutManager *layout = [self layoutManager];
 	NSString *string = [self string];
 	NSRange fullRange = NSMakeRange(0, [string length]);
-	if (layout && fullRange.length) {
-		[layout removeTemporaryAttribute:NSForegroundColorAttributeName forCharacterRange:fullRange];
-		[layout removeTemporaryAttribute:NSStrikethroughStyleAttributeName forCharacterRange:fullRange];
+	NSRange limit = [self activeMarkdownHighlightRange];
+	if (layout && limit.length) {
+		[layout removeTemporaryAttribute:NSForegroundColorAttributeName forCharacterRange:limit];
+		[layout removeTemporaryAttribute:NSBackgroundColorAttributeName forCharacterRange:limit];
+		[layout removeTemporaryAttribute:NSStrikethroughStyleAttributeName forCharacterRange:limit];
+		[layout removeTemporaryAttribute:NSUnderlineStyleAttributeName forCharacterRange:limit];
+		[layout removeTemporaryAttribute:NSFontAttributeName forCharacterRange:limit];
 	}
-	if (![self markdownCompletionsEnabled] || !layout || !fullRange.length || !prefsController)
+	if (!layout || !fullRange.length || !prefsController) {
+		[self highlightWritingGremlins];
+		[self reapplySearchHighlights];
+		[self nv_reapplyCompletionColors];
 		return;
+	}
+	NSFont *baseFont = [prefsController noteBodyFont] ?: [NSFont userFontOfSize:14.0];
+	NSColor *foreground = [theme editorForegroundColor] ?: [NSColor textColor];
+	NVThemeStyle *baseStyle = [NVThemeStyle styleWithForegroundColor:foreground];
+	NVThemeStyle *markup = [theme styleForKey:@"markup"] ?: baseStyle;
+	NVThemeStyle *link = [theme styleForKey:@"linkParens"] ?: [NVThemeStyle styleWithForegroundColor:[[self preferredLinkAttributes] objectForKey:NSForegroundColorAttributeName]];
+	NVThemeStyle *code = [theme styleForKey:@"codeSpan"] ?: [theme styleForKey:@"codeBlock"] ?: baseStyle;
+	NVThemeStyle *codeBlock = [theme styleForKey:@"codeBlock"] ?: code;
+	NVThemeStyle *quote = [theme styleForKey:@"blockquote"] ?: baseStyle;
+	NVThemeStyle *strong = [theme styleForKey:@"strong"] ?: baseStyle;
+	NVThemeStyle *emphasis = [theme styleForKey:@"emphasis"] ?: baseStyle;
+	NVThemeStyle *strike = [theme styleForKey:@"criticDeletion"] ?: baseStyle;
+	NVThemeStyle *highlight = [NVThemeStyle highlightStyleFromThemeStyle:[theme styleForKey:@"highlight"]];
+
+	[self paintThemeRange:limit style:baseStyle baseFont:baseFont useBaseFont:NO forceStrikethrough:NO];
+
+	static NSRegularExpression *headingRegex;
+	static NSRegularExpression *quoteRegex;
+	static NSRegularExpression *listRegex;
+	static NSRegularExpression *emphasisRegex;
+	static NSRegularExpression *strikeRegex;
+	static NSRegularExpression *linkRegex;
+	static NSRegularExpression *wikiRegex;
+	static NSRegularExpression *codeRegex;
+	static NSRegularExpression *ruleRegex;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		headingRegex = [NVMarkdownRegex(@"^(#{1,6})[ \\t]+(.+)$") retain];
+		quoteRegex = [NVMarkdownRegex(@"^([ \\t]{0,3}>)(.*)$") retain];
+		listRegex = [NVMarkdownRegex(@"^[ \\t]*(?:[-+*]|\\d+[.)])(?=[ \\t])") retain];
+		emphasisRegex = [NVMarkdownRegex(@"(?<![A-Za-z0-9])(\\*\\*|__|\\*|_)(?!\\s)([^\\n]+?)(?<!\\s)\\1(?![A-Za-z0-9])") retain];
+		strikeRegex = [NVMarkdownRegex(@"~~(?!\\s)([^\\n]+?)(?<!\\s)~~") retain];
+		linkRegex = [NVMarkdownRegex(@"!?\\[([^\\]\\n]*)\\]\\([^\\)\\n]*\\)") retain];
+		wikiRegex = [NVMarkdownRegex(@"\\[\\[([^\\]\\n]+)\\]\\]") retain];
+		codeRegex = [NVMarkdownRegex(@"(`+)([^`\\n]+?)\\1") retain];
+		ruleRegex = [NVMarkdownRegex(@"^[ \\t]{0,3}(?:(?:\\*[ \\t]*){3,}|(?:-[ \\t]*){3,}|(?:_[ \\t]*){3,})$") retain];
+	});
+
+	[self paintThemeMatches:quoteRegex string:string content:quote marker:markup baseFont:baseFont contentGroup:2 delimiterGroup:1 hasCloser:NO forceStrikethrough:NO];
+	[headingRegex enumerateMatchesInString:string options:0 range:limit usingBlock:^(NSTextCheckingResult *result, NSMatchingFlags flags, BOOL *stop) {
+		NSRange hashes = [result rangeAtIndex:1];
+		NSRange text = [result rangeAtIndex:2];
+		NSUInteger level = hashes.length;
+		NVThemeStyle *heading = [theme styleForHeadingLevel:level] ?: baseStyle;
+		[self paintThemeRange:text style:heading baseFont:baseFont useBaseFont:NO forceStrikethrough:NO];
+		[self paintThemeRange:hashes style:markup baseFont:baseFont useBaseFont:YES forceStrikethrough:NO];
+	}];
+	[emphasisRegex enumerateMatchesInString:string options:0 range:limit usingBlock:^(NSTextCheckingResult *result, NSMatchingFlags flags, BOOL *stop) {
+		NSRange delimiter = [result rangeAtIndex:1];
+		NSRange text = [result rangeAtIndex:2];
+		NSString *markerText = delimiter.location == NSNotFound ? @"" : [string substringWithRange:delimiter];
+		BOOL isStrong = [markerText length] > 1;
+		[self paintThemeRange:text style:(isStrong ? strong : emphasis) baseFont:baseFont useBaseFont:NO forceStrikethrough:NO];
+		[self paintThemeRange:delimiter style:markup baseFont:baseFont useBaseFont:YES forceStrikethrough:NO];
+		if (delimiter.length && [result range].length >= delimiter.length * 2) {
+			NSRange closer = NSMakeRange(NSMaxRange([result range]) - delimiter.length, delimiter.length);
+			[self paintThemeRange:closer style:markup baseFont:baseFont useBaseFont:YES forceStrikethrough:NO];
+		}
+	}];
+	[self paintThemeMatches:strikeRegex string:string content:strike marker:markup baseFont:baseFont contentGroup:1 delimiterGroup:0 hasCloser:NO forceStrikethrough:YES];
+	[self paintThemeMatches:linkRegex string:string content:link marker:markup baseFont:baseFont contentGroup:1 delimiterGroup:0 hasCloser:NO forceStrikethrough:NO];
+	[self paintThemeMatches:wikiRegex string:string content:link marker:markup baseFont:baseFont contentGroup:1 delimiterGroup:0 hasCloser:NO forceStrikethrough:NO];
+	if ([string rangeOfString:@"[" options:0 range:limit].location != NSNotFound)
+		[self highlightCompleteReferenceLinksInString:string style:link baseFont:baseFont];
+	[self paintThemeMatches:listRegex string:string content:markup marker:markup baseFont:baseFont contentGroup:0 delimiterGroup:0 hasCloser:NO forceStrikethrough:NO];
+	[self paintThemeMatches:ruleRegex string:string content:markup marker:markup baseFont:baseFont contentGroup:0 delimiterGroup:0 hasCloser:NO forceStrikethrough:NO];
+	[self highlightMarkedSpansInString:string style:highlight marker:markup baseFont:baseFont];
+	[self highlightCriticMarkupInString:string
+		addition:[NVThemeStyle criticStyleForKind:@"addition" fromThemeStyle:[theme styleForKey:@"criticAddition"]]
+		deletion:[NVThemeStyle criticStyleForKind:@"deletion" fromThemeStyle:[theme styleForKey:@"criticDeletion"]]
+		highlight:[NVThemeStyle criticStyleForKind:@"highlight" fromThemeStyle:[theme styleForKey:@"criticHighlight"]]
+		comment:[NVThemeStyle criticStyleForKind:@"comment" fromThemeStyle:[theme styleForKey:@"criticComment"]]
+		substitutionMarker:[theme styleForKey:@"criticSubstitution"]
+		marker:markup
+		baseFont:baseFont];
+	[self paintThemeMatches:codeRegex string:string content:code marker:markup baseFont:baseFont contentGroup:2 delimiterGroup:1 hasCloser:YES forceStrikethrough:NO];
+	[self highlightThemedFencedCodeInString:string code:codeBlock marker:markup baseFont:baseFont];
+	[self highlightWritingGremlins];
+	[self reapplySearchHighlights];
+	[self nv_reapplyCompletionColors];
+}
+
+- (void)clearMarkdownSyntaxHighlight {
+	NSLayoutManager *layout = [self layoutManager];
+	NSUInteger length = [[self string] length];
+	if (!layout || !length)
+		return;
+	NSRange fullRange = NSMakeRange(0, length);
+	[layout removeTemporaryAttribute:NSForegroundColorAttributeName forCharacterRange:fullRange];
+	[layout removeTemporaryAttribute:NSBackgroundColorAttributeName forCharacterRange:fullRange];
+	[layout removeTemporaryAttribute:NSStrikethroughStyleAttributeName forCharacterRange:fullRange];
+	[layout removeTemporaryAttribute:NSUnderlineStyleAttributeName forCharacterRange:fullRange];
+	[layout removeTemporaryAttribute:NSFontAttributeName forCharacterRange:fullRange];
+}
+
+- (NSColor *)plainEditorForegroundColor {
+	NVEditorTheme *theme = [[NVThemeManager sharedManager] currentEditorTheme];
+	NSColor *color = theme ? [theme editorForegroundColor] : nil;
+	if (!color)
+		color = [prefsController foregroundTextColor] ?: [(AppController *)[NSApp delegate] foregrndColor];
+	return color ?: [NSColor textColor];
+}
+
+/* Notes store black when no color is written down. A theme paints over that, and a long note
+   still needs the theme color after syntax coloring is skipped. One temporary run covers the
+   range: walking every attribute run builds an element per slice, and freeing those hangs. */
+- (void)applyPlainForegroundColorInRange:(NSRange)range {
+	NSColor *color = [self plainEditorForegroundColor];
+	NSString *string = [self string];
+	NSLayoutManager *layout = [self layoutManager];
+	NSTextStorage *storage = [self textStorage];
+	NSUInteger length = [string length];
+	if (!color || !layout || !storage || !length || !range.length || range.location == NSNotFound || range.location >= length)
+		return;
+	if (NSMaxRange(range) > length)
+		range.length = length - range.location;
+	if (range.length > 1024 || ![storage attribute:NSLinkAttributeName existsInRange:range]) {
+		[layout addTemporaryAttribute:NSForegroundColorAttributeName value:color forCharacterRange:range];
+		return;
+	}
+	NSUInteger index = range.location;
+	NSUInteger end = NSMaxRange(range);
+	while (index < end) {
+		NSRange effective = NSMakeRange(0, 0);
+		id link = [storage attribute:NSLinkAttributeName atIndex:index longestEffectiveRange:&effective inRange:NSMakeRange(0, length)];
+		NSRange slice = NSIntersectionRange(range, effective);
+		if (slice.length && !link)
+			[layout addTemporaryAttribute:NSForegroundColorAttributeName value:color forCharacterRange:slice];
+		if (NSMaxRange(effective) <= index)
+			break;
+		index = NSMaxRange(effective);
+	}
+}
+
+- (void)schedulePlainForegroundForRange:(NSRange)edited change:(NSInteger)change {
+	NSUInteger length = [[self string] length];
+	plainForegroundDirty = NVMarkdownHighlightUnionEdit(plainForegroundDirty, edited, change, length);
+	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(applyDeferredPlainForeground) object:nil];
+	[self performSelector:@selector(applyDeferredPlainForeground) withObject:nil afterDelay:0];
+}
+
+- (void)applyDeferredPlainForeground {
+	NSRange range = plainForegroundDirty;
+	plainForegroundDirty = NSMakeRange(NSNotFound, 0);
+	if (!NVMarkdownSyntaxHighlightEnabledForLength([[self string] length]))
+		[self applyPlainForegroundColorInRange:range];
+}
+
+- (void)prepareMarkdownHighlightLimit {
+	NSString *string = [self string];
+	NSUInteger length = [string length];
+	markdownHighlightLimit = NSMakeRange(0, length);
+	if (!NVMarkdownSyntaxHighlightEnabledForLength(length))
+		return;
+	if (markdownHighlightSuppressed)
+		markdownHighlightCoversAll = YES;
+	BOOL full = markdownHighlightCoversAll || markdownHighlightDirty.location == NSNotFound;
+	NSRange dirty = markdownHighlightDirty;
+	markdownHighlightCoversAll = NO;
+	markdownHighlightDirty = NSMakeRange(NSNotFound, 0);
+	if (!full && length)
+		markdownHighlightLimit = NVMarkdownHighlightRangeForEdit(string, dirty);
+}
+
+- (void)highlightMarkdownSyntax {
+	[self prepareMarkdownHighlightLimit];
+	NSUInteger length = [[self string] length];
+	if (!NVMarkdownSyntaxHighlightEnabledForLength(length)) {
+		/* A long note must not clear attributes, scan every character, or lay out
+		   the whole file on a keystroke. That path builds a text-storage element
+		   per run and freeing them is quadratic, which is the hang at the end of
+		   the note. The theme color is one attribute run, applied again only to
+		   the characters just typed. */
+		BOOL refreshAll = !markdownHighlightSuppressed || markdownHighlightCoversAll;
+		NSRange dirty = markdownHighlightDirty;
+		markdownHighlightCoversAll = NO;
+		markdownHighlightDirty = NSMakeRange(NSNotFound, 0);
+		markdownHighlightSuppressed = YES;
+		if (refreshAll)
+			[self applyPlainForegroundColorInRange:NSMakeRange(0, length)];
+		else if (dirty.location != NSNotFound)
+			[self applyPlainForegroundColorInRange:dirty];
+		return;
+	}
+	markdownHighlightSuppressed = NO;
+	NVEditorTheme *editorTheme = [[NVThemeManager sharedManager] currentEditorTheme];
+	if (editorTheme) {
+		[self highlightMarkdownSyntaxWithTheme:editorTheme];
+		NVLayOutEntireNote(self);
+		return;
+	}
+	NSLayoutManager *layout = [self layoutManager];
+	NSString *string = [self string];
+	NSRange fullRange = NSMakeRange(0, [string length]);
+	NSRange limit = [self activeMarkdownHighlightRange];
+	if (layout && limit.length) {
+		[layout removeTemporaryAttribute:NSForegroundColorAttributeName forCharacterRange:limit];
+		[layout removeTemporaryAttribute:NSStrikethroughStyleAttributeName forCharacterRange:limit];
+		[layout removeTemporaryAttribute:NSUnderlineStyleAttributeName forCharacterRange:limit];
+		[layout removeTemporaryAttribute:NSFontAttributeName forCharacterRange:limit];
+		[layout removeTemporaryAttribute:NSBackgroundColorAttributeName forCharacterRange:limit];
+	}
+	if (![self markdownCompletionsEnabled] || !layout || !fullRange.length || !prefsController) {
+		[self highlightWritingGremlins];
+		[self reapplySearchHighlights];
+		[self nv_reapplyCompletionColors];
+		NVLayOutEntireNote(self);
+		return;
+	}
 
 	NSColor *foreground = [prefsController foregroundTextColor] ?: [NSColor textColor];
 	NSColor *background = [self backgroundColor] ?: [NSColor textBackgroundColor];
@@ -928,7 +1806,7 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
 	dispatch_once(&once, ^{
 		headingRegex = [NVMarkdownRegex(@"^(#{1,6})[ \\t]+(.+)$") retain];
 		quoteRegex = [NVMarkdownRegex(@"^([ \\t]{0,3}>)(.*)$") retain];
-		listRegex = [NVMarkdownRegex(@"^[ \\t]{0,3}(?:[-+*]|\\d+[.)])(?=[ \\t])") retain];
+		listRegex = [NVMarkdownRegex(@"^[ \\t]*(?:[-+*]|\\d+[.)])(?=[ \\t])") retain];
 		emphasisRegex = [NVMarkdownRegex(@"(?<![A-Za-z0-9])(\\*\\*|__|\\*|_)(?!\\s)([^\\n]+?)(?<!\\s)\\1(?![A-Za-z0-9])") retain];
 		strikeRegex = [NVMarkdownRegex(@"~~(?!\\s)([^\\n]+?)(?<!\\s)~~") retain];
 		linkRegex = [NVMarkdownRegex(@"!?\\[([^\\]\\n]*)\\]\\([^\\)\\n]*\\)") retain];
@@ -943,10 +1821,26 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
 	[self paintMarkdownMatches:strikeRegex string:string content:foreground marker:marker contentGroup:1 delimiterGroup:0 hasCloser:NO strikethrough:YES];
 	[self paintMarkdownMatches:linkRegex string:string content:link marker:marker contentGroup:1 delimiterGroup:0 hasCloser:NO strikethrough:NO];
 	[self paintMarkdownMatches:wikiRegex string:string content:link marker:marker contentGroup:1 delimiterGroup:0 hasCloser:NO strikethrough:NO];
+	if ([string rangeOfString:@"[" options:0 range:limit].location != NSNotFound)
+		[self highlightCompleteReferenceLinksInString:string color:link];
 	[self paintMarkdownMatches:listRegex string:string content:marker marker:marker contentGroup:0 delimiterGroup:0 hasCloser:NO strikethrough:NO];
 	[self paintMarkdownMatches:ruleRegex string:string content:marker marker:marker contentGroup:0 delimiterGroup:0 hasCloser:NO strikethrough:NO];
+	NSFont *criticFont = [prefsController noteBodyFont] ?: [NSFont userFontOfSize:14.0];
+	[self highlightMarkedSpansInString:string style:[NVThemeStyle highlightStyleFromThemeStyle:nil] marker:[NVThemeStyle styleWithForegroundColor:marker] baseFont:criticFont];
+	[self highlightCriticMarkupInString:string
+		addition:[NVThemeStyle criticStyleForKind:@"addition" fromThemeStyle:nil]
+		deletion:[NVThemeStyle criticStyleForKind:@"deletion" fromThemeStyle:nil]
+		highlight:[NVThemeStyle criticStyleForKind:@"highlight" fromThemeStyle:nil]
+		comment:[NVThemeStyle criticStyleForKind:@"comment" fromThemeStyle:nil]
+		substitutionMarker:nil
+		marker:[NVThemeStyle styleWithForegroundColor:marker]
+		baseFont:criticFont];
 	[self paintMarkdownMatches:codeRegex string:string content:code marker:marker contentGroup:2 delimiterGroup:1 hasCloser:YES strikethrough:NO];
 	[self highlightFencedCodeInString:string code:code marker:marker];
+	[self highlightWritingGremlins];
+	[self reapplySearchHighlights];
+	[self nv_reapplyCompletionColors];
+	NVLayOutEntireNote(self);
 }
 
 - (BOOL)performKeyEquivalent:(NSEvent *)anEvent {
@@ -956,12 +1850,24 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
     if((modFlags&NSControlKeyMask)||(modFlags&NSAlternateKeyMask)){
          [[NSNotificationCenter defaultCenter] postNotificationName:@"ModTimersShouldReset" object:nil];
     }
+	if ([[self window] firstResponder] == self && [self handleMarkdownCommandShortcut:anEvent])
+		return YES;
 	if (((modFlags & NSCommandKeyMask)>0)&&([[self window]firstResponder]==self)) {
 		
 		unichar keyChar = [anEvent firstCharacterIgnoringModifiers];
 		NSUInteger deviceIndependent = modFlags & NSDeviceIndependentModifierFlagsMask;
 		BOOL commandOnly = (deviceIndependent & NSCommandKeyMask) &&
 			!(deviceIndependent & (NSShiftKeyMask | NSAlternateKeyMask | NSControlKeyMask));
+		BOOL commandOption = (deviceIndependent & NSCommandKeyMask) && (deviceIndependent & NSAlternateKeyMask) &&
+			!(deviceIndependent & (NSShiftKeyMask | NSControlKeyMask));
+		if (commandOption && (keyChar == 'l' || keyChar == 'L')) {
+			[self cycleListMarkerOnCurrentLine];
+			return YES;
+		}
+		if (commandOption && (keyChar == 't' || keyChar == 'T')) {
+			[self toggleTaskMarker:nil];
+			return YES;
+		}
 		if (commandOnly && (keyChar == 'b' || keyChar == 'B')) {
 			[self bold:nil];
 			return YES;
@@ -1021,6 +1927,7 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
 }
 
 - (void)keyDown:(NSEvent*)anEvent {	
+	[self nv_allowSelectionScroll];
     //    [[NSNotificationCenter defaultCenter] postNotificationName:@"ModTimersShouldReset" object:nil];
 	unichar keyChar = [anEvent firstCharacterIgnoringModifiers];
     
@@ -1030,6 +1937,8 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
 		[self doCommandBySelector:@selector(insertBacktab:)];
 		return;
 	}
+	if ([self handleMarkdownFunctionShortcut:anEvent])
+		return;
     //[super interpretKeyEvents:[NSArray arrayWithObject:anEvent]];
 	[super keyDown:anEvent];
     
@@ -1059,9 +1968,20 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
 		[super moveToBeginningOfLine:sender];
 }
 
+- (BOOL)nv_cursorBelongsToTaskCheckbox {
+	NSString *text = [self string];
+	NSUInteger length = [text length];
+	if (!length)
+		return NO;
+	NSUInteger location = MIN([self selectedRange].location, length);
+	NSUInteger probe = location < length ? location : length - 1;
+	NSRange lineRange = [text lineRangeForRange:NSMakeRange(probe, 0)];
+	return NVTaskCursorBelongsToCheckbox([text substringWithRange:lineRange], location - lineRange.location);
+}
+
 - (void)insertTab:(id)sender {
 	//check prefs for tab behavior
-    if ([[NSUserDefaults standardUserDefaults]boolForKey:@"UsesMarkdownCompletions"]) {
+    if ([[NSUserDefaults standardUserDefaults]boolForKey:@"UsesMarkdownCompletions"] && ![self nv_cursorBelongsToTaskCheckbox]) {
         NSRange selectedRange=[self selectedRange];
         NSUInteger closer=[self cursorIsInsidePair:@"]"];   
         if ((closer!=NSNotFound)||([self cursorIsImmediatelyPastPair:@"]"])){ 
@@ -1110,6 +2030,10 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
             return;
         }      
     }
+	if ([self indentListItemsInSelection:NO])
+		return;
+	if ([self adjustBlockquoteIndent:NO])
+		return;
 	BOOL wasAutomatic = NSEqualRanges(lastAutomaticallySelectedRange, [self selectedRange]);
 	
 	if ([prefsController tabKeyIndents] && (!wasAutomatic || ![[self string] length] || didChangeIntoAutomaticRange)) {
@@ -1121,7 +2045,7 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
 
 - (void)insertBacktab:(id)sender {
 	//check temporary NVHiddenBulletIndentAttributeName here first
-    if ([[NSUserDefaults standardUserDefaults]boolForKey:@"UsesMarkdownCompletions"]) {
+    if ([[NSUserDefaults standardUserDefaults]boolForKey:@"UsesMarkdownCompletions"] && ![self nv_cursorBelongsToTaskCheckbox]) {
         NSRange selectedRange=[self selectedRange];
         NSUInteger closer=[self cursorIsInsidePair:@"]"];        
         if ((closer!=NSNotFound)||([self cursorIsImmediatelyPastPair:@"]"])){             
@@ -1140,6 +2064,10 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
             return;
         }
     }
+	if ([self indentListItemsInSelection:YES])
+		return;
+	if ([self adjustBlockquoteIndent:YES])
+		return;
 	if ([prefsController autoFormatsListBullets] && [self _selectionAbutsBulletIndentRange]) {
 		
 		[self shiftLeftAction:nil];
@@ -1202,7 +2130,7 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
 				} else {
                     
 					NSInteger tabWidth = [prefsController numberOfSpacesInTab];
-					NSInteger indentWidth = 4;
+					NSInteger indentWidth = tabWidth > 0 ? tabWidth : 4;
 					BOOL usesTabs = ![prefsController softTabs];
 					NSRange leadingSpaceRange = paraRange;
 					NSInteger leadingSpaces = [string numberOfLeadingSpacesFromRange:&leadingSpaceRange tabWidth:tabWidth];
@@ -1294,6 +2222,76 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
     
     //fix for tooltip hanging around
     [super mouseExited:anEvent];
+}
+
+- (BOOL)nv_viewPointIsBelowText:(NSPoint)viewPoint {
+	NSLayoutManager *layout = [self layoutManager];
+	NSTextContainer *container = [self textContainer];
+	if (!layout || !container || ![[self string] length])
+		return NO;
+	NSUInteger glyphs = [layout numberOfGlyphs];
+	if (!glyphs)
+		return NO;
+	[layout ensureLayoutForGlyphRange:NSMakeRange(0, glyphs)];
+	NSPoint origin = [self textContainerOrigin];
+	NSRect lastLine = [layout lineFragmentRectForGlyphAtIndex:glyphs - 1 effectiveRange:NULL];
+	NSRect extra = [layout extraLineFragmentRect];
+	return NVClickIsPastLastLine(viewPoint.y - origin.y, NSMaxY(lastLine), !NSIsEmptyRect(extra), extra.origin.y);
+}
+
+- (void)nv_selectFromAnchor:(NSUInteger)anchor toIndex:(NSUInteger)index stillSelecting:(BOOL)stillSelecting {
+	NSUInteger length = [[self string] length];
+	if (anchor > length)
+		anchor = length;
+	if (index > length)
+		index = length;
+	NSUInteger start = MIN(anchor, index);
+	NSSelectionAffinity affinity = index < anchor ? NSSelectionAffinityUpstream : NSSelectionAffinityDownstream;
+	[self setSelectedRange:NSMakeRange(start, (anchor > index) ? anchor - index : index - anchor) affinity:affinity stillSelecting:stillSelecting];
+}
+
+- (void)nv_noteBodyClaimed {
+	//a click or an edit in the body: the delegate treats the current view as where the user wants this note kept
+	id delegate = [self delegate];
+	if ([delegate respondsToSelector:@selector(noteBodyWasClaimed:)])
+		[delegate noteBodyWasClaimed:self];
+}
+
+- (void)mouseDown:(NSEvent *)event {
+	[self nv_allowSelectionScroll];
+	[self nv_noteBodyClaimed];
+	if ([self nv_toggleTaskCheckboxForEvent:event])
+		return;
+	NSUInteger flags = [event modifierFlags] & NSDeviceIndependentModifierFlagsMask;
+	NSPoint viewPoint = [self convertPoint:[event locationInWindow] fromView:nil];
+	/* Control-click still brings up the menu. A double-click keeps the usual
+	   word selection. A plain click past the last line goes to the end, including
+	   a blank line that only holds spaces and a last line that holds text. */
+	if ([event clickCount] != 1 || (flags & NSControlKeyMask) || ![self nv_viewPointIsBelowText:viewPoint]) {
+		[super mouseDown:event];
+		return;
+	}
+
+	NSWindow *window = [self window];
+	BOOL extend = window && [window firstResponder] == self && (flags & NSShiftKeyMask);
+	NSUInteger anchor = extend ? [self selectedRange].location : [[self string] length];
+	[window makeFirstResponder:self];
+	NSUInteger length = [[self string] length];
+	if (!extend)
+		anchor = length;
+	[self nv_selectFromAnchor:anchor toIndex:length stillSelecting:NO];
+
+	NSEvent *tracked = event;
+	while (tracked && [tracked type] != NSLeftMouseUp) {
+		tracked = [NSApp nextEventMatchingMask:NSLeftMouseDraggedMask | NSLeftMouseUpMask untilDate:[NSDate distantFuture] inMode:NSEventTrackingRunLoopMode dequeue:YES];
+		if (!tracked || [tracked type] != NSLeftMouseDragged)
+			continue;
+		NSPoint draggedPoint = [self convertPoint:[tracked locationInWindow] fromView:nil];
+		NSUInteger index = [self nv_viewPointIsBelowText:draggedPoint] ? length : [self characterIndexForInsertionAtPoint:draggedPoint];
+		[self nv_selectFromAnchor:anchor toIndex:index stillSelecting:YES];
+		[self autoscroll:tracked];
+	}
+	[self setSelectedRange:[self selectedRange] affinity:[self selectionAffinity] stillSelecting:NO];
 }
 
 - (void)_fixCursorForBackgroundUpdatingMouseInside:(NSNumber*)num {
@@ -1401,18 +2399,13 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
         }
         return YES;
     }else if (action==@selector(pasteMarkdownLink:)) {
-        
-      //  if ([[NSUserDefaults standardUserDefaults]boolForKey:@"UsesMarkdownCompletions"]) {  
-           // [menuItem setHidden:NO];
-            if ([self clipboardHasLink]) {                
-                return YES;
-            }
-            
-       // }
-//        else{
-//            
-//            [menuItem setHidden:YES];
-//        }
+        if (![self markdownCompletionsEnabled]) {
+            [menuItem setHidden:YES];
+            return NO;
+        }
+        [menuItem setHidden:NO];
+        if ([self clipboardHasLink])
+            return YES;
         return NO;
     }
 	
@@ -1490,7 +2483,44 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
 	}
 }
 
+- (BOOL)linkReferenceCompletionIsOpen {
+	NSRange selection = [self selectedRange];
+	if (selection.length || selection.location > [[self string] length])
+		return NO;
+	NVLinkCompletionContext context = NVLinkCompletionContextAtLocation([self string], selection.location);
+	return context.kind != NVLinkCompletionNone && context.range.location != NSNotFound && NSMaxRange(context.range) <= [[self string] length];
+}
+
+- (void)completeSuggestedLinks {
+	if (isAutocompleting || wasDeleting)
+		return;
+	/* Completing a link copies the current line. A line that is the whole note is not worth scanning. */
+	if (!NVMarkdownSyntaxHighlightEnabledForLength([[self string] length])) {
+		NSRange selected = [self selectedRange];
+		if (selected.location <= [[self string] length]) {
+			NSRange line = [[self string] lineRangeForRange:NSMakeRange(selected.location == [[self string] length] && selected.location ? selected.location - 1 : selected.location, 0)];
+			if (line.length > 8192)
+				return;
+		}
+	}
+	if ([[self undoManager] isUndoing] || [[self undoManager] isRedoing])
+		return;
+	if (![prefsController linksAutoSuggested] && ![self linkReferenceCompletionIsOpen])
+		return;
+	isAutocompleting = YES;
+	[self complete:self];
+	isAutocompleting = NO;
+}
+
 - (NSRange)rangeForUserCompletion {
+	NSRange selection = [self selectedRange];
+	NSString *document = [self string];
+	if (selection.length == 0 && selection.location <= [document length]) {
+		NVLinkCompletionContext context = NVLinkCompletionContextAtLocation(document, selection.location);
+		if (context.kind != NVLinkCompletionNone && context.range.location != NSNotFound && NSMaxRange(context.range) <= [document length])
+			return context.range;
+	}
+
 	NSRange completionRange = [super rangeForUserCompletion];
 	//NSLog(@"completionRange: %@", [[self string] substringWithRange:completionRange]);
 	
@@ -1518,13 +2548,150 @@ cancelCompetion:
 	return NSMakeRange(NSNotFound, 0);
 }
 
+static BOOL NVIsLinkBracket(unichar character) {
+	return character == '[' || character == ']' || character == '(' || character == ')';
+}
+
+- (NSColor *)nv_themeForegroundColor {
+	NVEditorTheme *theme = [[NVThemeManager sharedManager] currentEditorTheme];
+	NSColor *color = [theme editorForegroundColor];
+	if (!color)
+		color = [(AppController *)[NSApp delegate] foregrndColor];
+	if (!color)
+		color = [NSColor textColor];
+	return color;
+}
+
+- (NSColor *)nv_linkBracketColor {
+	NVEditorTheme *theme = [[NVThemeManager sharedManager] currentEditorTheme];
+	NVThemeStyle *link = [theme styleForKey:@"linkParens"];
+	NSColor *markup = [link markupForegroundColor];
+	if (markup)
+		return markup;
+	NSColor *foreground = [link foregroundColor];
+	if (foreground)
+		return foreground;
+	NVThemeStyle *generic = [theme styleForKey:@"markup"];
+	return [generic foregroundColor] ?: [self nv_themeForegroundColor];
+}
+
+- (void)nv_applyCompletionSelectionColor {
+	NSColor *color = [self nv_themeForegroundColor];
+	if (!color)
+		return;
+	completionSelectionColored = YES;
+	NSMutableDictionary *attributes = [[[self selectedTextAttributes] mutableCopy] autorelease];
+	if (!attributes)
+		attributes = [NSMutableDictionary dictionary];
+	[attributes setObject:color forKey:NSForegroundColorAttributeName];
+	[self setSelectedTextAttributes:attributes];
+	NSUInteger length = [[self string] length];
+	if (completionColoredRange.length && completionColoredRange.location < length) {
+		NSRange word = completionColoredRange;
+		if (NSMaxRange(word) > length)
+			word.length = length - word.location;
+		[[self layoutManager] addTemporaryAttribute:NSForegroundColorAttributeName value:color forCharacterRange:word];
+	}
+}
+
+- (void)nv_restoreSelectedTextAttributes {
+	NSColor *background = [[self selectedTextAttributes] objectForKey:NSBackgroundColorAttributeName];
+	if (background)
+		[self setSelectedTextAttributes:[NSDictionary dictionaryWithObject:background forKey:NSBackgroundColorAttributeName]];
+}
+
+- (void)nv_paintLinkBracketsFrom:(NSUInteger)index towardEnd:(BOOL)towardEnd {
+	NSString *string = [self string];
+	NSUInteger length = [string length];
+	NSColor *color = [self nv_linkBracketColor];
+	NSLayoutManager *layout = [self layoutManager];
+	if (!color || !layout || index > length)
+		return;
+	if (!towardEnd) {
+		while (index > 0) {
+			unichar character = [string characterAtIndex:index - 1];
+			if (character == '\n' || character == '\r')
+				return;
+			if (NVIsLinkBracket(character)) {
+				NSUInteger end = index;
+				do {
+					index--;
+				} while (index > 0 && NVIsLinkBracket([string characterAtIndex:index - 1]));
+				[layout addTemporaryAttribute:NSForegroundColorAttributeName value:color forCharacterRange:NSMakeRange(index, end - index)];
+				return;
+			}
+			index--;
+		}
+		return;
+	}
+	while (index < length) {
+		unichar character = [string characterAtIndex:index];
+		if (character == '\n' || character == '\r')
+			return;
+		if (NVIsLinkBracket(character)) {
+			NSUInteger start = index;
+			do {
+				index++;
+			} while (index < length && NVIsLinkBracket([string characterAtIndex:index]));
+			[layout addTemporaryAttribute:NSForegroundColorAttributeName value:color forCharacterRange:NSMakeRange(start, index - start)];
+			return;
+		}
+		index++;
+	}
+}
+
+- (void)nv_recolorCompletionBrackets {
+	if (!completionSelectionColored)
+		return;
+	NSRange selected = [self selectedRange];
+	if (selected.location == NSNotFound || selected.location > [[self string] length])
+		return;
+	[self nv_paintLinkBracketsFrom:selected.location towardEnd:NO];
+	NSUInteger after = NSMaxRange(selected);
+	if (after > [[self string] length])
+		after = [[self string] length];
+	[self nv_paintLinkBracketsFrom:after towardEnd:YES];
+}
+
+- (void)nv_reapplyCompletionColors {
+	if (!completionSelectionColored)
+		return;
+	[self nv_applyCompletionSelectionColor];
+	[self nv_recolorCompletionBrackets];
+}
+
 - (void)insertCompletion:(NSString *)word forPartialWordRange:(NSRange)charRange movement:(NSInteger)movement isFinal:(BOOL)isFinal {
 	NSString *str = [self string];
 	BOOL finalizedCompletion = NO;
+	BOOL referenceCompletion = NO;
+	BOOL hasClosingBracket = NO;
 	
 	isFinal = isFinal && movement != NSRightTextMovement;
+
+	if (charRange.location != NSNotFound && NSMaxRange(charRange) <= [str length]) {
+		NVLinkCompletionContext context = NVLinkCompletionContextAtLocation(str, NSMaxRange(charRange));
+		referenceCompletion = (context.kind != NVLinkCompletionNone && NSEqualRanges(context.range, charRange));
+		if (referenceCompletion) {
+			// The inline preview selects the characters added past the typed id, so an
+			// existing ']' sits after that selection rather than after charRange.
+			NSUInteger end = NSMaxRange(charRange);
+			NSRange selected = [self selectedRange];
+			if (selected.length && selected.location >= charRange.location && selected.location <= end && NSMaxRange(selected) <= [str length])
+				end = MAX(end, NSMaxRange(selected));
+			if (end < [str length] && [str characterAtIndex:end] == ']')
+				hasClosingBracket = YES;
+		}
+	}
 	
-	if (isFinal && [word length] && (movement == NSReturnTextMovement || movement == NSTabTextMovement)) {
+	if (referenceCompletion) {
+		// Return, Tab, and a click all accept. The opening complete: call can also
+		// report a final insertion while the list is still up; leave that as a preview.
+		BOOL choose = (movement == NSReturnTextMovement || movement == NSTabTextMovement || movement == NSOtherTextMovement);
+		if (isFinal && !isAutocompleting && [word length] && choose) {
+			word = NVLinkCompletionInsert(word, hasClosingBracket);
+			finalizedCompletion = YES;
+		}
+	} else if (isFinal && [word length] && (movement == NSReturnTextMovement || movement == NSTabTextMovement)) {
 		
 		//automatically add a trailing double-bracket if one does not already exist
 		NSRange endRange = NSMakeRange(charRange.location + [word length], 2);
@@ -1535,12 +2702,33 @@ cancelCompetion:
 	}
 	
 	//preserve capitalization by transferring charRange substring into word
-	if (!finalizedCompletion && charRange.length <= [word length]) { 
+	if (!referenceCompletion && !finalizedCompletion && charRange.length <= [word length]) { 
 		NSString *existingWord = [str substringWithRange:charRange];
 		word = [existingWord stringByAppendingString:[word substringFromIndex:[existingWord length]]];
 	}
 	
 	[super insertCompletion:word forPartialWordRange:charRange movement:movement isFinal:isFinal];
+
+	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(nv_reapplyCompletionColors) object:nil];
+	if (isFinal) {
+		completionColoredRange = NSMakeRange(NSNotFound, 0);
+		if (completionSelectionColored) {
+			completionSelectionColored = NO;
+			[self nv_restoreSelectedTextAttributes];
+		}
+	} else if (charRange.location != NSNotFound && [word length] && charRange.location <= [[self string] length]) {
+		NSUInteger wordLength = MIN([word length], [[self string] length] - charRange.location);
+		completionColoredRange = NSMakeRange(charRange.location, wordLength);
+		[self nv_applyCompletionSelectionColor];
+		[self nv_recolorCompletionBrackets];
+		[self performSelector:@selector(nv_reapplyCompletionColors) withObject:nil afterDelay:0];
+	}
+
+	if (referenceCompletion && finalizedCompletion && hasClosingBracket) {
+		NSUInteger caret = [self selectedRange].location;
+		if (caret < [[self string] length] && [[self string] characterAtIndex:caret] == ']')
+			[self setSelectedRange:NSMakeRange(caret + 1, 0)];
+	}
 }
 
 - (void)didChangeText {
@@ -1552,24 +2740,27 @@ cancelCompetion:
 	else
 		changedRange = NSMakeRange(changedRange.location, MIN(changedRange.length, stringLength - changedRange.location));
 
+	[self nv_allowSelectionScroll];
+	[self nv_noteBodyClaimed];
 
-	//-removeAttribute:range: seems slow for some reason; try checking with -attributesAtIndex:effectiveRange: first
-	if ([[self textStorage] attribute:NSLinkAttributeName existsInRange:changedRange])
-		[[self textStorage] removeAttribute:NSLinkAttributeName range:changedRange];
-	[[self textStorage] addLinkAttributesForRange:changedRange];
-	
-	[[self textStorage] addStrikethroughNearDoneTagsForRange:changedRange];
-	
-	if (!isAutocompleting && !wasDeleting && [prefsController linksAutoSuggested] && 
-		![[self undoManager] isUndoing] && ![[self undoManager] isRedoing]) {
-		isAutocompleting = YES;
-		[self complete:self];
-		isAutocompleting = NO;
+
+	/* A data detector over a multi-megabyte line is the return-key hang at the end of a long note. */
+	if (NVMarkdownSyntaxHighlightEnabledForLength(stringLength) || changedRange.length <= 8192) {
+		//-removeAttribute:range: seems slow for some reason; try checking with -attributesAtIndex:effectiveRange: first
+		if ([[self textStorage] attribute:NSLinkAttributeName existsInRange:changedRange])
+			[[self textStorage] removeAttribute:NSLinkAttributeName range:changedRange];
+		[[self textStorage] addLinkAttributesForRange:changedRange];
+		
+		[[self textStorage] addStrikethroughNearDoneTagsForRange:changedRange];
 	}
+	
+	[self completeSuggestedLinks];
 	
 	//[[self window] invalidateCursorRectsForView:self];
 	
 	[super didChangeText];
+	if (!renumberingNumberedLists)
+		[self scheduleNumberedListRenumber];
 	
 	//if the result of changing the text caused us to move into the automatic range, then temporarily ignore the automatic range
 	//don't use -selectedRangeWasAutomatic: as it consults didRenderFully, which might not be true here
@@ -1610,7 +2801,7 @@ cancelCompetion:
 static long (*GetGetScriptManagerVariablePointer())(short) {
 	static long (*_GetScriptManagerVariablePointer)(short) = NULL;
 	if (!_GetScriptManagerVariablePointer) {
-		NSLog(@"looking up");
+		NVLogInfo(@"looking up");
 		CFBundleRef csBundle = CFBundleCreate(NULL, CFURLCreateWithFileSystemPath(NULL, CFSTR("/System/Library/Frameworks/CoreServices.framework"), kCFURLPOSIXPathStyle, TRUE));
 		if (csBundle) _GetScriptManagerVariablePointer = (long (*)(short))CFBundleGetDataPointerForName(csBundle, CFSTR("GetScriptManagerVariable"));
 	}
@@ -1618,7 +2809,22 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
 }
 #endif
 
+- (void)nv_applyThemeTypingColor {
+	NSColor *color = [self plainEditorForegroundColor];
+	if (!color)
+		return;
+	NSDictionary *typing = [self typingAttributes];
+	NSColor *current = [typing objectForKey:NSForegroundColorAttributeName];
+	if (current && ColorsEqualWith8BitChannels(current, color))
+		return;
+	NSMutableDictionary *updated = typing ? [typing mutableCopy] : [[NSMutableDictionary alloc] init];
+	[updated setObject:color forKey:NSForegroundColorAttributeName];
+	[self setTypingAttributes:updated];
+	[updated release];
+}
+
 - (void)fixTypingAttributesForSubstitutedFonts {
+	[self nv_applyThemeTypingColor];
 	//fixes a problem with fonts substituted by non-system input languages that Apple should have fixed themselves
 	
 	//if the user has chosen a default font that does not support the current input script, and then changes back to a language input that _does_
@@ -1719,7 +2925,7 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
 		return NO;
 
 	NSRange lineRange = [string lineRangeForRange:NSMakeRange(selected.location, 0)];
-	if (lineRange.length == 0)
+	if (lineRange.length == 0 || lineRange.length > 8192)
 		return NO;
 	NSString *line = [string substringWithRange:lineRange];
 	NSUInteger contentLength = [line length];
@@ -1749,7 +2955,7 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
 	// A continued item always has whitespace after the marker. A bare "1." or "---" is left alone.
 	if (markerEnd == NSNotFound || markerEnd >= contentLength)
 		return NO;
-	if ([line rangeOfCharacterFromSet:[whitespace invertedSet] options:0 range:NSMakeRange(markerEnd, contentLength - markerEnd)].location != NSNotFound)
+	if ([line rangeOfCharacterFromSet:[whitespace invertedSet] options:0 range:NSMakeRange(markerEnd, contentLength - markerEnd)].location != NSNotFound && !NVTaskLineIsEmptyItem(line))
 		return NO;
 
 	if (![self shouldChangeTextInRange:lineRange replacementString:@"\n"])
@@ -1764,8 +2970,11 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
 - (void)insertNewline:(id)sender {
 	//reset custom styles after each line
 	[self setTypingAttributes:[prefsController noteBodyAttributes]];
+	[self nv_applyThemeTypingColor];
 
 	if ([self replaceEmptyListMarkerWithLineBreak])
+		return;
+	if ([self insertMarkdownStructureNewline])
 		return;
 	
 	[super insertNewline:sender];
@@ -1773,7 +2982,13 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
 	if ([prefsController autoIndentsNewLines]) {
 		// If we should indent automatically, check the previous line and scan all the whitespace at the beginning of the line into a string and insert that string into the new line
 		NSString *previousLineWhitespaceString = nil;
-		NSRange previousLineRange = [[self string] lineRangeForRange:NSMakeRange([self selectedRange].location - 1, 0)];
+		NSUInteger caret = [self selectedRange].location;
+		if (!caret)
+			return;
+		NSRange previousLineRange = [[self string] lineRangeForRange:NSMakeRange(caret - 1, 0)];
+		/* Copying the whole note as the "previous line" is what stalls return at the end of a long paragraph. */
+		if (previousLineRange.length > 8192)
+			return;
 		NSScanner *previousLineScanner = [[NSScanner alloc] initWithString:[[self string] substringWithRange:previousLineRange]];
 		[previousLineScanner setCharactersToBeSkipped:nil];
 		
@@ -1822,6 +3037,9 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
                     previousLineWhitespaceString = [previousLineWhitespaceString stringByAppendingFormat:@"%@", [NSString stringWithCharacters:&bulletChar length:1]];
                 }
                 previousLineWhitespaceString=[previousLineWhitespaceString stringByAppendingFormat:@"%@",[NSString stringWithCharacters:&wsChar length:1]];
+                NSString *taskSuffix = NVTaskContinuationSuffix([[self string] substringWithRange:previousLineRange]);
+                if ([taskSuffix length])
+                    previousLineWhitespaceString = [previousLineWhitespaceString stringByAppendingString:taskSuffix];
             } else if (NSMaxRange(realBulletRange) < [[self string] length] && [self _rangeIsAutoIdentedBullet:realBulletRange]) {
                 //should not carry a bullet; also check if one is here that we should delete
                 shouldDeleteLastBullet = YES;
@@ -1871,6 +3089,9 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
     theMenuItem = [[[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Insert Link",@"insert link menu item title") action:@selector(insertLink:) keyEquivalent:@""] autorelease];
 	[theMenuItem setTarget:self];
 	[theMenu addItem:theMenuItem];
+	theMenuItem = [[[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Insert Markdown Link",@"markdown link menu item title") action:@selector(insertMarkdownLink:) keyEquivalent:@""] autorelease];
+	[theMenuItem setTarget:self];
+	[theMenu addItem:theMenuItem];
     theMenuItem = [[[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Use Selection for Find",@"find using selection menu item title") action:@selector(performFindPanelAction:) keyEquivalent:@""] autorelease];
     [theMenuItem setTag:7];
 	[theMenuItem setTarget:self];
@@ -1908,6 +3129,11 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
 	theMenuItem = [[[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Strikethrough",nil) action:@selector(strikethroughNV:) keyEquivalent:@""] autorelease];
 	[theMenuItem setTarget:self];
 	[formatMenu addItem:theMenuItem];
+
+	theMenuItem = [[[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Task",nil) action:@selector(toggleTaskMarker:) keyEquivalent:@"t"] autorelease];
+	[theMenuItem setKeyEquivalentModifierMask:NSCommandKeyMask | NSAlternateKeyMask];
+	[theMenuItem setTarget:self];
+	[formatMenu addItem:theMenuItem];
 	
 	theMenuItem = [[[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Format",@"format submenu title") action:NULL keyEquivalent:@""] autorelease];
 	[theMenu addItem:theMenuItem];
@@ -1936,6 +3162,10 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
 		theMenuItem = [[[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Insert Link",@"insert link menu item title") action:@selector(insertLink:) keyEquivalent:@"L"] autorelease];
         [theMenuItem setTarget:self];
         [editMenu addItem:theMenuItem];
+		theMenuItem = [[[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Insert Markdown Link",@"markdown link menu item title") action:@selector(insertMarkdownLink:) keyEquivalent:@"k"] autorelease];
+		[theMenuItem setKeyEquivalentModifierMask:NSCommandKeyMask | NSAlternateKeyMask];
+		[theMenuItem setTarget:self];
+		[editMenu addItem:theMenuItem];
         
 		[editMenu addItem:[NSMenuItem separatorItem]];
         
@@ -1996,7 +3226,7 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
 
 - (void)dealloc {
     [NSObject cancelPreviousPerformRequestsWithTarget:self];
-    NSLog(@"dealloc linkinged");
+    NVLogInfo(@"dealloc linkinged");
     [self unbind:@"automaticQuoteSubstitutionEnabled"];
     [self unbind:@"automaticDashSubstitutionEnabled"];
     [self unbind:@"automaticTextReplacementEnabled"];
@@ -2023,6 +3253,28 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
 
 
 #pragma mark - nvALT additions
+
+- (void)setNeedsDisplayInRect:(NSRect)invalidRect {
+	if (!expandingDisplayRect) {
+		expandingDisplayRect = YES;
+		invalidRect = NVTextRedrawRect(invalidRect);
+		[super setNeedsDisplayInRect:invalidRect];
+		expandingDisplayRect = NO;
+		return;
+	}
+	[super setNeedsDisplayInRect:invalidRect];
+}
+
+- (void)setNeedsDisplayInRect:(NSRect)rect avoidAdditionalLayout:(BOOL)flag {
+	if (!expandingDisplayRect) {
+		expandingDisplayRect = YES;
+		rect = NVTextRedrawRect(rect);
+		[super setNeedsDisplayInRect:rect avoidAdditionalLayout:flag];
+		expandingDisplayRect = NO;
+		return;
+	}
+	[super setNeedsDisplayInRect:rect avoidAdditionalLayout:flag];
+}
 
 - (BOOL)isOpaque{
     return YES;
@@ -2072,84 +3324,48 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
 
 - (void)insertText:(id)string {
     if([prefsController useAutoPairing]){
-        NSString *oppositeAppend;
-        NSInteger pairCode;
+        NSString *oppositeAppend = nil;
         NSString *insertString;
         if([string isKindOfClass:[NSAttributedString class]]){
             insertString=[(NSAttributedString *)string string];
         }else{
             insertString=(NSString *)string;
         }
-        if((pairCode=[insertString isPairedCharacterWithMatchString:&oppositeAppend])>=0){
+        NSInteger pairCode = [insertString isPairedCharacterWithMatchString:&oppositeAppend];
+        if(pairCode>=0){
             NSString *appendString = insertString;
             NSRange selRange = [self selectedRange];
-            NSString *postString = self.activeParagraphPastCursor;
-            
-            NSInteger autoPair=-1;
-            if ((postString.length==0)||(selRange.length>0)||![[NSCharacterSet alphanumericCharacterSet]characterIsMember:[postString characterAtIndex:0]]) {
-                autoPair=0;
+            NVAutoPairAction action = NVAutoPairActionForInsert(appendString, oppositeAppend, pairCode, self.activeParagraphBeforeCursor, self.activeParagraphPastCursor, selRange.length);
+            if (action == NVAutoPairTypeOver) {
+                selRange.location+=1;
+                [self selectRangeAndRegisterUndo:selRange];
+                return;
             }
-            NSString *preStr=self.activeParagraphBeforeCursor;
-            if (pairCode==2&&autoPair==0) {
-                NSUInteger closingIdx=[postString rangeOfString:oppositeAppend].location;
-                if (closingIdx!=NSNotFound) {
-                    NSUInteger openingIdx=[[postString substringToIndex:closingIdx] rangeOfString:appendString].location;
-                    if (openingIdx==NSNotFound) {
-                        openingIdx=[preStr rangeOfString:appendString options:NSBackwardsSearch].location;
-                        if (openingIdx!=NSNotFound) {
-                            NSUInteger opIdx=[preStr rangeOfString:oppositeAppend options:NSBackwardsSearch].location;
-                            //                              NSLog(@"opIdx :>%lu<  op:%lu",opIdx,openingIdx);
-                            if ((opIdx==NSNotFound)||(opIdx<openingIdx)) {
-                                closingIdx=NSNotFound;
-                            }
-                        }
-                    }else{
-                        closingIdx=NSNotFound;
-                    }
-                }
-                if (closingIdx==NSNotFound) {
-                    autoPair=1;
-                }
-            }else{
-                NSUInteger openingIdx=[postString rangeOfString:appendString].location;
-                BOOL advance=NO;
-                if (pairCode==1) {
-                    advance=(openingIdx==0);
-                    if (!advance&&autoPair==0) {
-                        NSUInteger aftCt=([[postString componentsSeparatedByString:appendString] count]%2);
-                        NSUInteger befCt=([[preStr componentsSeparatedByString:appendString] count]%2);
-                        if (befCt==aftCt) {
-                            autoPair=1;
-                        }
-                    }
-                }else{
-                    advance=(openingIdx==0);
-                }
-                if (advance&&(selRange.length==0)) {
-                    openingIdx=[preStr rangeOfString:oppositeAppend options:NSBackwardsSearch].location;
-                    NSUInteger clIdx=[preStr rangeOfString:appendString options:NSBackwardsSearch].location;
-                    if ((openingIdx!=NSNotFound)&&((clIdx==NSNotFound)||(openingIdx>=clIdx))) {
-                        selRange.location+=1;
-                        [self selectRangeAndRegisterUndo:selRange];
-                        return;
-                    }
-                }
-            }
-            if (autoPair==1) {
+            if (action == NVAutoPairWrapOrInsert) {
                 if (selRange.length>0) {
+                    NSString *prefix = appendString;
+                    NSString *suffix = oppositeAppend;
+                    NSString *affix = NVAutoPairSelectionAffix(appendString);
+                    if (affix) {
+                        prefix = affix;
+                        suffix = affix;
+                    }
                     [[[self undoManager] prepareWithInvocationTarget:self] setSelectedRange:selRange];
                     NSRange insRange=selRange;
                     insRange.length=0;
-                    [super insertText:appendString replacementRange:insRange];
-                    insRange.location+=(selRange.length+1); //add appendstr.length
-                    [super insertText:oppositeAppend replacementRange:insRange];
-                    insRange.location+=1;  //add oppappendstr.length
-                    //                    selRange.length+=2;
+                    [super insertText:prefix replacementRange:insRange];
+                    insRange.location += selRange.length + [prefix length];
+                    [super insertText:suffix replacementRange:insRange];
+                    insRange.location += [suffix length];
                     [self setSelectedRange:insRange];
                     return;
                 }else {
                     [super insertText:[appendString stringByAppendingString:oppositeAppend]];
                     [self setSelectedRange:NSMakeRange(selRange.location+appendString.length, 0)];
+                    // The pair is inserted with the caret after the closer, then moved between
+                    // the brackets. Offer link ids once the caret is actually inside.
+                    if ([appendString isEqualToString:@"["])
+                        [self completeSuggestedLinks];
                     return;
                 }
             }
@@ -2270,7 +3486,7 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
                 [self setSelectedRange:selRange];
                 return YES;
             }else{
-                NSLog(@"trying to add markdown syntax, but selection string contains an even# of the syntax. haven't dealt with this condition yet");
+                NVLogWarning(@"trying to add markdown syntax, but selection string contains an even# of the syntax. haven't dealt with this condition yet");
             }
         }
         
@@ -2305,62 +3521,665 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
 
 
 
-- (BOOL)updateNumberedListFromRange:(NSRange)currentRange startingNum:(NSInteger)listNum{
-    if ((listNum==-1)||(currentRange.location==NSNotFound)) {
-        return NO;
-    }
-    NSRange nextRange=NSMakeRange(currentRange.location, 0);
-    NSString *noteText=[self string];
-    NSUInteger noteLen=noteText.length;
-    if (NSMaxRange(nextRange)>noteLen) {
-        return NO;
-    }
-    
-    nextRange=[noteText lineRangeForRange:nextRange];
-    if((nextRange.location==NSNotFound)||(NSMaxRange(nextRange)>noteLen)||(nextRange.length<2)) {
-        return NO;
-    }
-    NSString *wsString=[noteText substringWithRange:nextRange];
-    NSRange txtRange=[wsString rangeOfCharacterFromSet:[[NSCharacterSet whitespaceAndNewlineCharacterSet] invertedSet]];
-    if (txtRange.location==NSNotFound) {
-        return NO;
-    }
-    wsString=[wsString substringToIndex:txtRange.location];
-    
-    nextRange=NSMakeRange(NSMaxRange(currentRange)+1, 0);
-    BOOL success=NO;
-    while (NSMaxRange(nextRange)<noteLen) {
-        nextRange=[noteText lineRangeForRange:nextRange];
-        [noteText firstNumberFromStringWithinRange:nextRange isInRange:&txtRange];
-        if ((txtRange.location==NSNotFound)||(nextRange.length<(NSMaxRange(txtRange)+1))||(![[noteText substringWithRange:NSMakeRange(nextRange.location, txtRange.location)] isEqualToString:wsString])) {
-            break;
-        }
-        
-        listNum++;
-        NSString *nums=[NSString stringWithFormat:@"%ld",listNum];
-        txtRange=NSMakeRange(nextRange.location+txtRange.location, txtRange.length);
-        if ([self shouldChangeTextInRange:txtRange replacementString:nums]) {
-            [self replaceCharactersInRange:txtRange withString:nums];
-            [[self layoutManager]invalidateDisplayForCharacterRange:txtRange];
-            //            [[self layoutManager] addTemporaryAttributes:[NSDictionary dictionaryWithObject:[NSNull null] forKey:NVHiddenBulletIndentAttributeName] forCharacterRange:txtRange];
-            //            [self didChangeText];
-            success=YES;
-            nextRange=NSMakeRange(NSMaxRange(nextRange), 0);
-            NSUInteger numLen=nums.length;
-            if (txtRange.length<numLen) {
-                numLen-=txtRange.length;
-                nextRange.location+=numLen;
-                noteLen+=numLen;
-            }else if (numLen<txtRange.length){
-                numLen=txtRange.length-numLen;
-                noteLen-=numLen;
-            }
-            continue;
-        }
-        break;
-    }
-    
-    return success;
+static NSUInteger NVListIndentWidth(NSString *line, NSUInteger contentLength, NSUInteger tabWidth, NSUInteger *markerIndex) {
+	NSUInteger width = 0;
+	NSUInteger index = 0;
+	while (index < contentLength) {
+		unichar character = [line characterAtIndex:index];
+		if (character == '\t')
+			width += tabWidth;
+		else if (character == ' ')
+			width += 1;
+		else
+			break;
+		index++;
+	}
+	if (markerIndex)
+		*markerIndex = index;
+	return width;
+}
+
+static BOOL NVLineIsFence(NSString *line, NSUInteger contentLength) {
+	NSUInteger index = 0;
+	while (index < contentLength && ([line characterAtIndex:index] == ' ' || [line characterAtIndex:index] == '\t'))
+		index++;
+	if (contentLength - index < 3)
+		return NO;
+	unichar fence = [line characterAtIndex:index];
+	if (fence != '`' && fence != '~')
+		return NO;
+	NSUInteger start = index;
+	while (index < contentLength && [line characterAtIndex:index] == fence)
+		index++;
+	if (index - start < 3)
+		return NO;
+	while (index < contentLength && ([line characterAtIndex:index] == ' ' || [line characterAtIndex:index] == '\t'))
+		index++;
+	while (index < contentLength && [[NSCharacterSet alphanumericCharacterSet] characterIsMember:[line characterAtIndex:index]])
+		index++;
+	return index == contentLength;
+}
+
+// Numbered markers are "1." or "1)" followed by whitespace. A run of digits that is not a marker returns NO.
+static BOOL NVNumberedMarker(NSString *line, NSUInteger contentLength, NSUInteger markerIndex, NSRange *digits, NSInteger *number) {
+	if (markerIndex >= contentLength || ![[NSCharacterSet decimalDigitCharacterSet] characterIsMember:[line characterAtIndex:markerIndex]])
+		return NO;
+	NSUInteger end = markerIndex;
+	while (end < contentLength && [[NSCharacterSet decimalDigitCharacterSet] characterIsMember:[line characterAtIndex:end]])
+		end++;
+	if (end >= contentLength || ([line characterAtIndex:end] != '.' && [line characterAtIndex:end] != ')'))
+		return NO;
+	if (end + 1 >= contentLength || ![[NSCharacterSet whitespaceCharacterSet] characterIsMember:[line characterAtIndex:end + 1]])
+		return NO;
+	if (digits)
+		*digits = NSMakeRange(markerIndex, end - markerIndex);
+	if (number)
+		*number = [[line substringWithRange:NSMakeRange(markerIndex, end - markerIndex)] integerValue];
+	return YES;
+}
+
+static BOOL NVBulletMarker(NSString *line, NSUInteger contentLength, NSUInteger markerIndex) {
+	if (markerIndex >= contentLength || ![[NSCharacterSet listBulletsCharacterSet] characterIsMember:[line characterAtIndex:markerIndex]])
+		return NO;
+	if (markerIndex + 1 < contentLength && [line characterAtIndex:markerIndex + 1] == [line characterAtIndex:markerIndex])
+		return NO;
+	return markerIndex + 1 < contentLength && [[NSCharacterSet whitespaceCharacterSet] characterIsMember:[line characterAtIndex:markerIndex + 1]];
+}
+
+- (NSUInteger)listTabWidth {
+	NSInteger width = [prefsController numberOfSpacesInTab];
+	return width > 0 ? (NSUInteger)width : 4;
+}
+
+- (void)scheduleNumberedListRenumber {
+	if (renumberingNumberedLists || ![prefsController autoFormatsListBullets])
+		return;
+	if (!NVMarkdownSyntaxHighlightEnabledForLength([[self string] length]))
+		return;
+	if ([[self undoManager] isUndoing] || [[self undoManager] isRedoing])
+		return;
+	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(renumberNumberedLists) object:nil];
+	[self performSelector:@selector(renumberNumberedLists) withObject:nil afterDelay:0.05];
+}
+
+- (void)renumberNumberedLists {
+	if (renumberingNumberedLists || ![prefsController autoFormatsListBullets])
+		return;
+	if (!NVMarkdownSyntaxHighlightEnabledForLength([[self string] length]))
+		return;
+	if ([[self undoManager] isUndoing] || [[self undoManager] isRedoing])
+		return;
+	NSString *text = [self string];
+	NSUInteger length = [text length];
+	if (!length)
+		return;
+	NSUInteger tabWidth = [self listTabWidth];
+	NSMutableDictionary *nextNumberAtWidth = [NSMutableDictionary dictionary];
+	NSMutableArray *digitRanges = [NSMutableArray array];
+	NSMutableArray *replacements = [NSMutableArray array];
+	BOOL insideFence = NO;
+	NSUInteger index = 0;
+	while (index < length) {
+		NSRange lineRange = [text lineRangeForRange:NSMakeRange(index, 0)];
+		NSString *line = [text substringWithRange:lineRange];
+		NSUInteger contentLength = [line length];
+		while (contentLength && [[NSCharacterSet newlineCharacterSet] characterIsMember:[line characterAtIndex:contentLength - 1]])
+			contentLength--;
+		if (NVLineIsFence(line, contentLength))
+			insideFence = !insideFence;
+		else if (!insideFence && contentLength) {
+			NSUInteger markerIndex = 0;
+			NSUInteger width = NVListIndentWidth(line, contentLength, tabWidth, &markerIndex);
+			NSRange digits = NSMakeRange(NSNotFound, 0);
+			NSInteger number = 0;
+			if (NVNumberedMarker(line, contentLength, markerIndex, &digits, &number)) {
+				NSNumber *key = [NSNumber numberWithUnsignedInteger:width];
+				NSInteger expected = [[nextNumberAtWidth objectForKey:key] integerValue];
+				if (expected < 1)
+					expected = 1;
+				[nextNumberAtWidth setObject:[NSNumber numberWithInteger:expected + 1] forKey:key];
+				NSArray *widths = [[nextNumberAtWidth allKeys] copy];
+				NSUInteger widthIndex;
+				for (widthIndex = 0; widthIndex < [widths count]; widthIndex++) {
+					NSNumber *deeper = [widths objectAtIndex:widthIndex];
+					if ([deeper unsignedIntegerValue] > width)
+						[nextNumberAtWidth removeObjectForKey:deeper];
+				}
+				[widths release];
+				if (number != expected) {
+					[digitRanges addObject:[NSValue valueWithRange:NSMakeRange(lineRange.location + digits.location, digits.length)]];
+					[replacements addObject:[NSString stringWithFormat:@"%ld", (long)expected]];
+				}
+			} else {
+				NSUInteger resetAt = width;
+				BOOL resetsThisLevel = YES;
+				if (NVBulletMarker(line, contentLength, markerIndex))
+					resetsThisLevel = YES;
+				else if (markerIndex >= contentLength)
+					resetsThisLevel = NO;
+				if (resetsThisLevel || markerIndex < contentLength) {
+					NSArray *widths = [[nextNumberAtWidth allKeys] copy];
+					NSUInteger widthIndex;
+					for (widthIndex = 0; widthIndex < [widths count]; widthIndex++) {
+						NSNumber *existing = [widths objectAtIndex:widthIndex];
+						NSUInteger existingWidth = [existing unsignedIntegerValue];
+						if (existingWidth > width || (resetsThisLevel && existingWidth == resetAt))
+							[nextNumberAtWidth removeObjectForKey:existing];
+					}
+					[widths release];
+				}
+			}
+		}
+		if (NSMaxRange(lineRange) <= index)
+			break;
+		index = NSMaxRange(lineRange);
+	}
+	if (![replacements count])
+		return;
+
+	renumberingNumberedLists = YES;
+	NSRange selection = [self selectedRange];
+	BOOL selectionInsideNumber = NO;
+	NSInteger shiftBeforeCaret = 0;
+	NSUInteger changeIndex;
+	[[self undoManager] beginUndoGrouping];
+	for (changeIndex = [replacements count]; changeIndex > 0; changeIndex--) {
+		NSRange range = [[digitRanges objectAtIndex:changeIndex - 1] rangeValue];
+		NSString *replacement = [replacements objectAtIndex:changeIndex - 1];
+		if ([self shouldChangeTextInRange:range replacementString:replacement])
+			[self replaceCharactersInRange:range withString:replacement];
+	}
+	for (changeIndex = 0; changeIndex < [replacements count]; changeIndex++) {
+		NSRange range = [[digitRanges objectAtIndex:changeIndex] rangeValue];
+		NSString *replacement = [replacements objectAtIndex:changeIndex];
+		NSInteger delta = (NSInteger)[replacement length] - (NSInteger)range.length;
+		if (NSMaxRange(range) <= selection.location)
+			shiftBeforeCaret += delta;
+		else if (range.location < selection.location && selection.location < NSMaxRange(range)) {
+			selection.location = range.location + [replacement length];
+			selection.length = 0;
+			selectionInsideNumber = YES;
+		}
+	}
+	if (!selectionInsideNumber)
+		selection.location += shiftBeforeCaret;
+	NSUInteger editedLength = [[self string] length];
+	if (selection.location > editedLength)
+		selection.location = editedLength;
+	if (NSMaxRange(selection) > editedLength)
+		selection.length = editedLength - selection.location;
+	[self setSelectedRange:selection];
+	[self didChangeText];
+	[[self undoManager] setActionName:NSLocalizedString(@"Renumber List", nil)];
+	[[self undoManager] endUndoGrouping];
+	renumberingNumberedLists = NO;
+}
+
+- (BOOL)updateNumberedListFromRange:(NSRange)currentRange startingNum:(NSInteger)listNum {
+	if (![prefsController autoFormatsListBullets])
+		return NO;
+	[self scheduleNumberedListRenumber];
+	return YES;
+}
+
+- (BOOL)lineRangeIsListItem:(NSRange)lineRange inText:(NSString *)text tabWidth:(NSUInteger)tabWidth indentWidth:(NSUInteger *)outWidth {
+	if (!lineRange.length || NSMaxRange(lineRange) > [text length])
+		return NO;
+	NSString *line = [text substringWithRange:lineRange];
+	NSUInteger contentLength = [line length];
+	while (contentLength && [[NSCharacterSet newlineCharacterSet] characterIsMember:[line characterAtIndex:contentLength - 1]])
+		contentLength--;
+	NSUInteger markerIndex = 0;
+	NSUInteger width = NVListIndentWidth(line, contentLength, tabWidth, &markerIndex);
+	if (outWidth)
+		*outWidth = width;
+	return NVNumberedMarker(line, contentLength, markerIndex, NULL, NULL) || NVBulletMarker(line, contentLength, markerIndex);
+}
+
+- (BOOL)indentListItemsInSelection:(BOOL)outdent {
+	if (![prefsController autoFormatsListBullets])
+		return NO;
+	NSString *text = [self string];
+	NSRange selection = [self selectedRange];
+	if (![text length] || selection.location > [text length])
+		return NO;
+	NSUInteger start = MIN(selection.location, [text length]);
+	NSUInteger endLocation = selection.length ? NSMaxRange(selection) : selection.location;
+	if (endLocation > [text length])
+		endLocation = [text length];
+	if (selection.length && endLocation)
+		endLocation -= 1;
+	NSRange firstLine = NVLineRangeForCaret(text, start);
+	NSRange lastLine = NVLineRangeForCaret(text, endLocation);
+	NSUInteger tabWidth = [self listTabWidth];
+	NSMutableArray *lines = [NSMutableArray array];
+	NSUInteger scan = firstLine.location;
+	BOOL foundList = NO;
+	while (scan <= lastLine.location && scan < [text length]) {
+		NSRange lineRange = [text lineRangeForRange:NSMakeRange(scan, 0)];
+		NSUInteger width = 0;
+		BOOL isList = [self lineRangeIsListItem:lineRange inText:text tabWidth:tabWidth indentWidth:&width];
+		if (isList)
+			foundList = YES;
+		[lines addObject:[NSValue valueWithRange:lineRange]];
+		if (NSMaxRange(lineRange) <= scan)
+			break;
+		scan = NSMaxRange(lineRange);
+	}
+	if (!foundList)
+		return NO;
+	NSString *unit = [prefsController softTabs] ? [@"" stringByPaddingToLength:tabWidth withString:@" " startingAtIndex:0] : @"\t";
+	[[self undoManager] beginUndoGrouping];
+	NSInteger lineIndex;
+	for (lineIndex = (NSInteger)[lines count] - 1; lineIndex >= 0; lineIndex--) {
+		NSRange lineRange = [[lines objectAtIndex:(NSUInteger)lineIndex] rangeValue];
+		text = [self string];
+		if (NSMaxRange(lineRange) > [text length])
+			continue;
+		if (![self lineRangeIsListItem:lineRange inText:text tabWidth:tabWidth indentWidth:NULL])
+			continue;
+		NSString *line = [text substringWithRange:lineRange];
+		NSString *core = line;
+		if ([core length] && [[NSCharacterSet newlineCharacterSet] characterIsMember:[core characterAtIndex:[core length] - 1]])
+			core = [core substringToIndex:[core length] - 1];
+		NSRange edited = NSMakeRange(lineRange.location, 0);
+		NSString *changeString = nil;
+		if (outdent) {
+			if ([core hasPrefix:unit])
+				edited.length = [unit length];
+			else if ([core hasPrefix:@"\t"])
+				edited.length = 1;
+			else {
+				NSUInteger spaces = 0;
+				while (spaces < [core length] && spaces < tabWidth && [core characterAtIndex:spaces] == ' ')
+					spaces++;
+				if (!spaces)
+					continue;
+				edited.length = spaces;
+			}
+			changeString = @"";
+		} else {
+			changeString = unit;
+		}
+		if (![self shouldChangeTextInRange:edited replacementString:changeString])
+			continue;
+		[self replaceCharactersInRange:edited withString:changeString];
+		[self adjustSelection:&selection forEditAt:edited replacementLength:[changeString length]];
+		/* The indent is gone. A bullet that lands on a numbered list becomes the next number there, and a number that lands on a bullet becomes that bullet. */
+		if (outdent && lineRange.location <= [[self string] length]) {
+			NSString *fresh = [self string];
+			NSRange freshLine = [fresh lineRangeForRange:NSMakeRange(lineRange.location, 0)];
+			NSRange markerInLine = NSMakeRange(NSNotFound, 0);
+			NSString *marker = NVListMarkerAfterOutdent(fresh, freshLine, tabWidth, &markerInLine);
+			if ([marker length] && markerInLine.location != NSNotFound) {
+				NSRange documentMarker = NSMakeRange(freshLine.location + markerInLine.location, markerInLine.length);
+				if (NSMaxRange(documentMarker) <= [fresh length] && [self shouldChangeTextInRange:documentMarker replacementString:marker]) {
+					[self replaceCharactersInRange:documentMarker withString:marker];
+					[self adjustSelection:&selection forEditAt:documentMarker replacementLength:[marker length]];
+				}
+			}
+		}
+	}
+	NSUInteger editedLength = [[self string] length];
+	if (selection.location > editedLength)
+		selection.location = editedLength;
+	if (NSMaxRange(selection) > editedLength)
+		selection.length = editedLength - selection.location;
+	[self setSelectedRange:selection];
+	[self didChangeText];
+	[[self undoManager] setActionName:outdent ? NSLocalizedString(@"Outdent", nil) : NSLocalizedString(@"Indent", nil)];
+	[[self undoManager] endUndoGrouping];
+	return YES;
+}
+
+- (NSArray *)nv_lineRangesForSelection:(NSRange)selection inText:(NSString *)text {
+	NSMutableArray *lines = [NSMutableArray array];
+	if (!text || selection.location > [text length])
+		return lines;
+	if (![text length]) {
+		[lines addObject:[NSValue valueWithRange:NSMakeRange(0, 0)]];
+		return lines;
+	}
+	NSUInteger start = MIN(selection.location, [text length]);
+	NSUInteger endLocation = selection.length ? NSMaxRange(selection) - 1 : start;
+	if (endLocation >= [text length])
+		endLocation = [text length] - 1;
+	NSRange firstLine = [text lineRangeForRange:NSMakeRange(start, 0)];
+	NSRange lastLine = [text lineRangeForRange:NSMakeRange(endLocation, 0)];
+	NSUInteger scan = firstLine.location;
+	while (scan <= lastLine.location && scan <= [text length]) {
+		NSRange lineRange = [text lineRangeForRange:NSMakeRange(MIN(scan, [text length]), 0)];
+		[lines addObject:[NSValue valueWithRange:lineRange]];
+		if (NSMaxRange(lineRange) <= scan)
+			break;
+		scan = NSMaxRange(lineRange);
+	}
+	return lines;
+}
+
+- (NSRange)nv_markerRangeInLine:(NSString *)line contentLength:(NSUInteger)contentLength markerIndex:(NSUInteger)markerIndex {
+	NSRange digits = NSMakeRange(NSNotFound, 0);
+	if (NVNumberedMarker(line, contentLength, markerIndex, &digits, NULL)) {
+		NSUInteger markerEnd = digits.location + digits.length + 1;
+		while (markerEnd < contentLength && [[NSCharacterSet whitespaceCharacterSet] characterIsMember:[line characterAtIndex:markerEnd]])
+			markerEnd++;
+		return NSMakeRange(digits.location, markerEnd - digits.location);
+	}
+	if (NVBulletMarker(line, contentLength, markerIndex)) {
+		NSUInteger markerEnd = markerIndex + 1;
+		while (markerEnd < contentLength && [[NSCharacterSet whitespaceCharacterSet] characterIsMember:[line characterAtIndex:markerEnd]])
+			markerEnd++;
+		return NSMakeRange(markerIndex, markerEnd - markerIndex);
+	}
+	return NSMakeRange(NSNotFound, 0);
+}
+
+- (NSRange)nv_rangeCoveringLineCount:(NSUInteger)count fromLocation:(NSUInteger)start {
+	NSString *text = [self string];
+	if (start > [text length])
+		start = [text length];
+	NSUInteger location = start;
+	NSRange lastLine = NSMakeRange(start, 0);
+	NSUInteger remaining = count;
+	while (remaining && location <= [text length]) {
+		lastLine = [text lineRangeForRange:NSMakeRange(MIN(location, [text length]), 0)];
+		remaining--;
+		if (!remaining || NSMaxRange(lastLine) <= location)
+			break;
+		location = NSMaxRange(lastLine);
+	}
+	NSRange covered = NSUnionRange(NSMakeRange(start, 0), lastLine);
+	if (covered.location > [text length])
+		covered.location = [text length];
+	if (NSMaxRange(covered) > [text length])
+		covered.length = [text length] - covered.location;
+	return covered;
+}
+
+- (BOOL)nv_cycleListMarkersOnLineRanges:(NSArray *)lines {
+	NSString *text = [self string];
+	NSUInteger tabWidth = [self listTabWidth];
+	NSUInteger plainCount = 0;
+	NSUInteger bulletCount = 0;
+	NSUInteger numberedCount = 0;
+	for (NSValue *value in lines) {
+		NSRange lineRange = [value rangeValue];
+		if (NSMaxRange(lineRange) > [text length])
+			continue;
+		NSString *line = [text substringWithRange:lineRange];
+		NSUInteger contentLength = [line length];
+		while (contentLength && [[NSCharacterSet newlineCharacterSet] characterIsMember:[line characterAtIndex:contentLength - 1]])
+			contentLength--;
+		NSUInteger markerIndex = 0;
+		NVListIndentWidth(line, contentLength, tabWidth, &markerIndex);
+		if (markerIndex >= contentLength)
+			continue;
+		NSRange marker = [self nv_markerRangeInLine:line contentLength:contentLength markerIndex:markerIndex];
+		if (marker.location == NSNotFound)
+			plainCount++;
+		else if (NVNumberedMarker(line, contentLength, markerIndex, NULL, NULL))
+			numberedCount++;
+		else
+			bulletCount++;
+	}
+	if (!plainCount && !bulletCount && !numberedCount)
+		return YES;
+	/* Mixed lines clear back to plain text. A uniform bullet selection becomes
+	   numbers, and a uniform numbered selection is the step that clears them. */
+	BOOL remove = (plainCount && (bulletCount || numberedCount)) || (numberedCount && !bulletCount);
+	BOOL number = !remove && bulletCount > 0;
+	NSString *bullet = [[prefsController markdownListMarker] stringByAppendingString:@" "];
+	NSUInteger firstLocation = [[lines objectAtIndex:0] rangeValue].location;
+	[[self undoManager] beginUndoGrouping];
+	BOOL changed = NO;
+	NSInteger lineIndex;
+	for (lineIndex = (NSInteger)[lines count] - 1; lineIndex >= 0; lineIndex--) {
+		text = [self string];
+		NSRange lineRange = [[lines objectAtIndex:(NSUInteger)lineIndex] rangeValue];
+		if (NSMaxRange(lineRange) > [text length])
+			continue;
+		NSString *line = [text substringWithRange:lineRange];
+		NSUInteger contentLength = [line length];
+		while (contentLength && [[NSCharacterSet newlineCharacterSet] characterIsMember:[line characterAtIndex:contentLength - 1]])
+			contentLength--;
+		NSUInteger markerIndex = 0;
+		NVListIndentWidth(line, contentLength, tabWidth, &markerIndex);
+		NSRange marker = [self nv_markerRangeInLine:line contentLength:contentLength markerIndex:markerIndex];
+		NSRange edited = NSMakeRange(NSNotFound, 0);
+		NSString *replacement = nil;
+		if (remove) {
+			if (marker.location == NSNotFound)
+				continue;
+			edited = NSMakeRange(lineRange.location + marker.location, marker.length);
+			replacement = @"";
+		} else if (number) {
+			if (marker.location == NSNotFound || NVNumberedMarker(line, contentLength, markerIndex, NULL, NULL))
+				continue;
+			edited = NSMakeRange(lineRange.location + marker.location, marker.length);
+			replacement = @"1. ";
+		} else {
+			if (marker.location != NSNotFound || markerIndex >= contentLength)
+				continue;
+			edited = NSMakeRange(lineRange.location + markerIndex, 0);
+			replacement = bullet;
+		}
+		if (![self shouldChangeTextInRange:edited replacementString:replacement])
+			continue;
+		[self replaceCharactersInRange:edited withString:replacement];
+		changed = YES;
+	}
+	if (changed) {
+		NSRange covered = [self nv_rangeCoveringLineCount:[lines count] fromLocation:firstLocation];
+		[self setSelectedRange:covered];
+		if (number) {
+			renumberingNumberedLists = YES;
+			[self didChangeText];
+			renumberingNumberedLists = NO;
+			[self renumberNumberedLists];
+			NSUInteger renumberedStart = [self selectedRange].location;
+			[self setSelectedRange:[self nv_rangeCoveringLineCount:[lines count] fromLocation:renumberedStart]];
+		} else {
+			[self didChangeText];
+		}
+		NSString *actionName = NSLocalizedString(@"Add List Markers", nil);
+		if (remove)
+			actionName = NSLocalizedString(@"Remove List Markers", nil);
+		else if (number)
+			actionName = NSLocalizedString(@"Number List", nil);
+		[[self undoManager] setActionName:actionName];
+	}
+	[[self undoManager] endUndoGrouping];
+	return YES;
+}
+
+- (BOOL)nv_toggleTaskCheckboxForEvent:(NSEvent *)event {
+	if ([event clickCount] != 1)
+		return NO;
+	NSUInteger flags = [event modifierFlags] & NSDeviceIndependentModifierFlagsMask;
+	if (flags & (NSControlKeyMask | NSShiftKeyMask | NSCommandKeyMask | NSAlternateKeyMask))
+		return NO;
+	NSPoint viewPoint = [self convertPoint:[event locationInWindow] fromView:nil];
+	if ([self nv_viewPointIsBelowText:viewPoint])
+		return NO;
+	NSTextContainer *container = [self textContainer];
+	NSLayoutManager *layout = [self layoutManager];
+	if (!container || !layout || ![layout numberOfGlyphs])
+		return NO;
+	NSPoint containerPoint = viewPoint;
+	NSPoint origin = [self textContainerOrigin];
+	containerPoint.x -= origin.x;
+	containerPoint.y -= origin.y;
+	NSUInteger glyph = [layout glyphIndexForPoint:containerPoint inTextContainer:container fractionOfDistanceThroughGlyph:NULL];
+	if (glyph >= [layout numberOfGlyphs])
+		return NO;
+	NSRect glyphRect = [layout boundingRectForGlyphRange:NSMakeRange(glyph, 1) inTextContainer:container];
+	if (!NSMouseInRect(containerPoint, glyphRect, YES))
+		return NO;
+	NSUInteger charIndex = [layout characterIndexForGlyphAtIndex:glyph];
+	NSString *text = [self string];
+	if (charIndex >= [text length] || NVTaskIndexIsInsideFence(text, charIndex))
+		return NO;
+	NSRange lineRange = [text lineRangeForRange:NSMakeRange(charIndex, 0)];
+	NSString *line = [text substringWithRange:lineRange];
+	NVTaskEdit edit = NVTaskToggleEdit(line, charIndex - lineRange.location);
+	if (edit.range.location == NSNotFound)
+		return NO;
+	NSRange documentRange = NSMakeRange(lineRange.location + edit.range.location, edit.range.length);
+	if (![self shouldChangeTextInRange:documentRange replacementString:edit.replacement])
+		return NO;
+	[[self undoManager] beginUndoGrouping];
+	[self replaceCharactersInRange:documentRange withString:edit.replacement];
+	[self setSelectedRange:NSMakeRange(documentRange.location + [edit.replacement length], 0)];
+	[self didChangeText];
+	[[self undoManager] setActionName:NSLocalizedString(@"Toggle Task", nil)];
+	[[self undoManager] endUndoGrouping];
+	return YES;
+}
+
+- (BOOL)toggleTaskMarkerOnSelectedLines {
+	NSString *text = [self string];
+	NSRange selection = [self selectedRange];
+	if (selection.location > [text length])
+		return NO;
+	NSArray *lines = nil;
+	BOOL multi = NO;
+	if ([text length] && selection.length) {
+		lines = [self nv_lineRangesForSelection:selection inText:text];
+		multi = [lines count] > 1;
+	}
+	if (!multi) {
+		NSRange lineRange = [text lineRangeForRange:NSMakeRange(MIN(selection.location, [text length]), 0)];
+		lines = [NSArray arrayWithObject:[NSValue valueWithRange:lineRange]];
+	}
+	NSUInteger firstLocation = [[lines objectAtIndex:0] rangeValue].location;
+	BOOL grouping = NO;
+	BOOL changed = NO;
+	BOOL removed = NO;
+	BOOL added = NO;
+	NSInteger lineIndex;
+	for (lineIndex = (NSInteger)[lines count] - 1; lineIndex >= 0; lineIndex--) {
+		text = [self string];
+		NSRange lineRange = [[lines objectAtIndex:(NSUInteger)lineIndex] rangeValue];
+		if (lineRange.location > [text length])
+			continue;
+		if (NSMaxRange(lineRange) > [text length])
+			lineRange.length = [text length] - lineRange.location;
+		if (NVTaskIndexIsInsideFence(text, lineRange.location))
+			continue;
+		NSString *line = [text substringWithRange:lineRange];
+		NVTaskEdit edit = NVTaskShortcutEdit(line);
+		if (edit.range.location == NSNotFound)
+			continue;
+		NSRange documentRange = NSMakeRange(lineRange.location + edit.range.location, edit.range.length);
+		if (NSMaxRange(documentRange) > [text length])
+			continue;
+		if (![self shouldChangeTextInRange:documentRange replacementString:edit.replacement])
+			continue;
+		if (!grouping) {
+			[[self undoManager] beginUndoGrouping];
+			grouping = YES;
+		}
+		if ([edit.replacement isEqualToString:@" "])
+			removed = YES;
+		else
+			added = YES;
+		[self replaceCharactersInRange:documentRange withString:edit.replacement];
+		if (!multi) {
+			NSInteger delta = (NSInteger)[edit.replacement length] - (NSInteger)documentRange.length;
+			if (selection.location >= NSMaxRange(documentRange))
+				selection.location += delta;
+			else if (selection.location > documentRange.location)
+				selection.location = documentRange.location + [edit.replacement length];
+			if (selection.location > [[self string] length])
+				selection.location = [[self string] length];
+			selection.length = 0;
+		}
+		changed = YES;
+	}
+	if (changed) {
+		if (multi)
+			changedRange = [self nv_rangeCoveringLineCount:[lines count] fromLocation:firstLocation];
+		[self setSelectedRange:multi ? changedRange : selection];
+		[self didChangeText];
+		NSString *actionName = (removed && !added) ? NSLocalizedString(@"Remove Task", nil) : NSLocalizedString(@"Add Task", nil);
+		[[self undoManager] setActionName:actionName];
+	}
+	if (grouping)
+		[[self undoManager] endUndoGrouping];
+	return YES;
+}
+
+- (IBAction)toggleTaskMarker:(id)sender {
+	(void)sender;
+	[self toggleTaskMarkerOnSelectedLines];
+}
+
+- (BOOL)cycleListMarkerOnCurrentLine {
+	if (![prefsController autoFormatsListBullets])
+		return NO;
+	NSString *text = [self string];
+	NSRange selection = [self selectedRange];
+	if (selection.location > [text length])
+		return NO;
+	if ([text length] && selection.length) {
+		NSArray *lines = [self nv_lineRangesForSelection:selection inText:text];
+		if ([lines count] > 1)
+			return [self nv_cycleListMarkersOnLineRanges:lines];
+	}
+	NSRange lineRange = [text lineRangeForRange:NSMakeRange(MIN(selection.location, [text length]), 0)];
+	NSString *line = [text substringWithRange:lineRange];
+	NSUInteger contentLength = [line length];
+	while (contentLength && [[NSCharacterSet newlineCharacterSet] characterIsMember:[line characterAtIndex:contentLength - 1]])
+		contentLength--;
+	NSUInteger tabWidth = [self listTabWidth];
+	NSUInteger markerIndex = 0;
+	NVListIndentWidth(line, contentLength, tabWidth, &markerIndex);
+	if (markerIndex > contentLength)
+		return NO;
+	NSRange digits = NSMakeRange(NSNotFound, 0);
+	NSString *replacement = nil;
+	NSRange replaceRange = NSMakeRange(lineRange.location + markerIndex, 0);
+	NSInteger cursorDelta = 0;
+	if (NVNumberedMarker(line, contentLength, markerIndex, &digits, NULL)) {
+		NSUInteger markerEnd = digits.location + digits.length + 1;
+		while (markerEnd < contentLength && [[NSCharacterSet whitespaceCharacterSet] characterIsMember:[line characterAtIndex:markerEnd]])
+			markerEnd++;
+		replaceRange = NSMakeRange(lineRange.location + digits.location, markerEnd - digits.location);
+		replacement = @"";
+		cursorDelta = -(NSInteger)replaceRange.length;
+	} else if (NVBulletMarker(line, contentLength, markerIndex)) {
+		NSUInteger markerEnd = markerIndex + 1;
+		while (markerEnd < contentLength && [[NSCharacterSet whitespaceCharacterSet] characterIsMember:[line characterAtIndex:markerEnd]])
+			markerEnd++;
+		replaceRange = NSMakeRange(lineRange.location + markerIndex, markerEnd - markerIndex);
+		replacement = @"1. ";
+		cursorDelta = (NSInteger)[replacement length] - (NSInteger)replaceRange.length;
+	} else if (markerIndex < contentLength) {
+		unichar character = [line characterAtIndex:markerIndex];
+		BOOL bareMarker = [[NSCharacterSet listBulletsCharacterSet] characterIsMember:character] || [[NSCharacterSet decimalDigitCharacterSet] characterIsMember:character];
+		if (bareMarker)
+			return YES;
+		replacement = [[prefsController markdownListMarker] stringByAppendingString:@" "];
+		replaceRange = NSMakeRange(lineRange.location + markerIndex, 0);
+		cursorDelta = (NSInteger)[replacement length];
+	} else {
+		replacement = [[prefsController markdownListMarker] stringByAppendingString:@" "];
+		replaceRange = NSMakeRange(lineRange.location + markerIndex, 0);
+		cursorDelta = (NSInteger)[replacement length];
+	}
+	if (![self shouldChangeTextInRange:replaceRange replacementString:replacement])
+		return YES;
+	[self replaceCharactersInRange:replaceRange withString:replacement];
+	if (selection.location >= NSMaxRange(replaceRange))
+		selection.location += cursorDelta;
+	else if (selection.location > replaceRange.location)
+		selection.location = replaceRange.location + [replacement length];
+	NSUInteger editedLength = [[self string] length];
+	if (selection.location > editedLength)
+		selection.location = editedLength;
+	[self setSelectedRange:selection];
+	[self didChangeText];
+	return YES;
 }
 
 #pragma mark managing text width
@@ -2412,8 +4231,30 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
 }
 
 
+- (void)nv_matchVisibleMinHeight {
+	NSScrollView *scroll;
+	CGFloat visible;
+	NSSize min;
+	if (matchingMinHeight)
+		return;
+	scroll = [self enclosingScrollView];
+	if (!scroll)
+		return;
+	visible = [scroll contentSize].height;
+	if (visible < 1.0)
+		return;
+	min = [self minSize];
+	if (fabs(min.height - visible) < 0.5)
+		return;
+	matchingMinHeight = YES;
+	[self setMinSize:NSMakeSize(min.width, visible)];
+	matchingMinHeight = NO;
+}
+
 - (void)setFrame:(NSRect)frameRect{
+    [self nv_matchVisibleMinHeight];
     [self updateInsetForFrame:frameRect andForceLayout:NO];
+    frameRect.size.height = NVNoteHeightForProposedHeight(self, frameRect.size.height);
     [super setFrame:frameRect];
 }
 
@@ -2508,11 +4349,10 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
 
 - (BOOL)cursorAtRange:(NSRange)charRange isBetweenEmptyPairsInLineRange:(NSRange)actRange{
     NSUInteger keyLoc=charRange.location;
-    if ((keyLoc>actRange.location)&&(keyLoc<NSMaxRange(actRange))) {     
-        keyLoc=[@"([{\"'" rangeOfString:[NSString stringWithFormat:@"%C",[[self string] characterAtIndex:keyLoc-1]]].location;
-        if ((keyLoc!=NSNotFound)&&(keyLoc==[@")]}\"'" rangeOfString:[NSString stringWithFormat:@"%C",[[self string] characterAtIndex:charRange.location]]].location)) {
+    if ((keyLoc>actRange.location)&&(keyLoc<NSMaxRange(actRange))) {
+        NSString *string = [self string];
+        if (NVCharactersFormEmptyPair([string characterAtIndex:keyLoc - 1], [string characterAtIndex:keyLoc]))
             return YES;
-        }
     }
     return NO;
 }
@@ -2762,7 +4602,7 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
             
 //            [textFinder setFindIndicatorNeedsUpdate:YES];
         }else{
-            NSLog(@"find action was invalid");
+            NVLogError(@"find action was invalid");
         }
         [newSender release];
         return;
@@ -2810,6 +4650,10 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
 }
 
 - (IBAction)pasteMarkdownLink:(id)sender{
+    if (![self markdownCompletionsEnabled]) {
+        [super paste:sender];
+        return;
+    }
     NSString *aftaString=[self.activeParagraphPastCursor stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     NSString *bifoString=[self.activeParagraphBeforeCursor stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@" https://"]];
     NSPredicate *bifoRefPred=[NSPredicate predicateWithFormat:@"SELF LIKE[cd] %@ OR SELF LIKE[cd] %@",@"*[*]",@"*[*]("];
@@ -2979,6 +4823,1094 @@ static long (*GetGetScriptManagerVariablePointer())(short) {
             } 
         }        
     }
+}
+
+#pragma mark Markdown writing
+
+static BOOL NVWritingFence(NSString *core, NSString **outIndent, NSString **outMarker) {
+	NSUInteger index = 0;
+	NSUInteger length = [core length];
+	while (index < length && ([core characterAtIndex:index] == ' ' || [core characterAtIndex:index] == '\t'))
+		index++;
+	if (length - index < 3)
+		return NO;
+	unichar fence = [core characterAtIndex:index];
+	if (fence != '`' && fence != '~')
+		return NO;
+	NSUInteger start = index;
+	while (index < length && [core characterAtIndex:index] == fence)
+		index++;
+	if (index - start < 3)
+		return NO;
+	NSUInteger markerEnd = index;
+	while (index < length && ([core characterAtIndex:index] == ' ' || [core characterAtIndex:index] == '\t'))
+		index++;
+	while (index < length && [[NSCharacterSet alphanumericCharacterSet] characterIsMember:[core characterAtIndex:index]])
+		index++;
+	if (index != length)
+		return NO;
+	if (outIndent)
+		*outIndent = [core substringToIndex:start];
+	if (outMarker)
+		*outMarker = [core substringWithRange:NSMakeRange(start, markerEnd - start)];
+	return YES;
+}
+
+static BOOL NVBlockquoteParts(NSString *core, NSString **prefix, NSString **rest) {
+	NSUInteger index = 0;
+	NSUInteger length = [core length];
+	BOOL sawQuote = NO;
+	while (index < length) {
+		unichar character = [core characterAtIndex:index];
+		if (character != ' ' && character != '\t' && character != '>')
+			break;
+		if (character == '>')
+			sawQuote = YES;
+		index++;
+	}
+	if (!sawQuote)
+		return NO;
+	if (prefix)
+		*prefix = [core substringToIndex:index];
+	if (rest)
+		*rest = [core substringFromIndex:index];
+	return YES;
+}
+
+static NSString *NVCoreOfLine(NSString *line) {
+	NSUInteger length = [line length];
+	while (length && [[NSCharacterSet newlineCharacterSet] characterIsMember:[line characterAtIndex:length - 1]])
+		length--;
+	return [line substringToIndex:length];
+}
+
+- (void)setSelectedRange:(NSRange)charRange affinity:(NSSelectionAffinity)affinity stillSelecting:(BOOL)stillSelectingFlag {
+	if (!NSEqualRanges(charRange, lastAutomaticallySelectedRange))
+		[self nv_allowSelectionScroll];
+	if (!markdownAdjustingSelection)
+		markdownSelectionLevel = 0;
+	[super setSelectedRange:charRange affinity:affinity stillSelecting:stillSelectingFlag];
+}
+
+- (void)highlightWritingGremlins {
+	NSLayoutManager *layout = [self layoutManager];
+	NSString *text = [self string];
+	NSRange limit = [self activeMarkdownHighlightRange];
+	if (!layout || ![text length] || !limit.length)
+		return;
+	NSColor *invisible = [NSColor colorWithCalibratedRed:0.82 green:0.22 blue:0.22 alpha:0.7];
+	NSColor *space = [NSColor colorWithCalibratedRed:0.92 green:0.45 blue:0.28 alpha:0.35];
+	NSUInteger index;
+	for (index = limit.location; index < NSMaxRange(limit); index++) {
+		unichar character = [text characterAtIndex:index];
+		BOOL hidden = (character < 0x20 && character != '\t' && character != '\n' && character != '\r') || character == 0x7F || (character >= 0x80 && character <= 0x9F) || character == 0xAD || character == 0x200B || character == 0x200C || character == 0x200D || character == 0x2060 || character == 0xFEFF;
+		BOOL unusualSpace = character == 0x00A0 || character == 0x202F || character == 0x205F || character == 0x3000 || (character >= 0x2000 && character <= 0x200A);
+		if (!hidden && !unusualSpace)
+			continue;
+		[layout addTemporaryAttribute:NSBackgroundColorAttributeName value:(hidden ? invisible : space) forCharacterRange:NSMakeRange(index, 1)];
+	}
+}
+
+- (BOOL)handleMarkdownCommandShortcut:(NSEvent *)event {
+	NSUInteger flags = [event modifierFlags] & NSDeviceIndependentModifierFlagsMask;
+	BOOL command = (flags & NSCommandKeyMask) != 0;
+	BOOL option = (flags & NSAlternateKeyMask) != 0;
+	BOOL control = (flags & NSControlKeyMask) != 0;
+	BOOL shift = (flags & NSShiftKeyMask) != 0;
+	NSString *chars = [event charactersIgnoringModifiers];
+	unsigned short keyCode = [event keyCode];
+	if (command && option && !control && !shift && ([chars isEqualToString:@"k"] || [chars isEqualToString:@"K"])) {
+		[self insertMarkdownLink:nil];
+		return YES;
+	}
+	if (command && control && !option && !shift && (keyCode == 123 || keyCode == 124)) {
+		if (keyCode == 123)
+			[self shiftLeftAction:nil];
+		else
+			[self shiftRightAction:nil];
+		return YES;
+	}
+	if (command && control && !option && (keyCode == 126 || keyCode == 125)) {
+		if (keyCode == 126)
+			[self moveCurrentParagraphUp];
+		else
+			[self moveCurrentParagraphDown];
+		return YES;
+	}
+	if (command && option && !control && (keyCode == 126 || keyCode == 125)) {
+		if (keyCode == 126)
+			[self expandMarkdownSelection];
+		else
+			[self shrinkMarkdownSelection];
+		return YES;
+	}
+	return NO;
+}
+
+- (BOOL)handleMarkdownFunctionShortcut:(NSEvent *)event {
+	NSUInteger flags = [event modifierFlags] & NSDeviceIndependentModifierFlagsMask;
+	if ((flags & (NSCommandKeyMask | NSAlternateKeyMask | NSControlKeyMask)) != 0)
+		return NO;
+	unsigned short keyCode = [event keyCode];
+	if (keyCode == 97)
+		return [self insertOrJumpMagicReference];
+	if (keyCode == 98)
+		return [self insertOrJumpMagicFootnote];
+	return NO;
+}
+
+- (IBAction)insertMarkdownLink:(id)sender {
+	NSRange selection = [self selectedRange];
+	NSString *text = [self string];
+	if (selection.location > [text length])
+		return;
+	if (selection.length) {
+		NSString *selected = [text substringWithRange:selection];
+		NSString *replacement = [NSString stringWithFormat:@"[%@]()", selected];
+		if (![self shouldChangeTextInRange:selection replacementString:replacement])
+			return;
+		[self replaceCharactersInRange:selection withString:replacement];
+		[self setSelectedRange:NSMakeRange(selection.location + [replacement length] - 1, 0)];
+	} else {
+		if (![self shouldChangeTextInRange:NSMakeRange(selection.location, 0) replacementString:@"[]()"])
+			return;
+		[self replaceCharactersInRange:NSMakeRange(selection.location, 0) withString:@"[]()"];
+		[self setSelectedRange:NSMakeRange(selection.location + 1, 0)];
+	}
+	[self didChangeText];
+}
+
+- (BOOL)insertMarkdownStructureNewline {
+	NSString *text = [self string];
+	/* Closing a fence counts every earlier fence. On a long note that walk is the return-key hang. */
+	if (!NVMarkdownSyntaxHighlightEnabledForLength([text length]))
+		return NO;
+	NSRange selection = [self selectedRange];
+	if (selection.location > [text length])
+		return NO;
+	NSRange lineRange = [text lineRangeForRange:NSMakeRange(selection.location, 0)];
+	NSString *core = NVCoreOfLine([text substringWithRange:lineRange]);
+	NSString *indent = nil;
+	NSString *marker = nil;
+	if (NVWritingFence(core, &indent, &marker)) {
+		NSUInteger seen = 0;
+		NSUInteger scan = 0;
+		while (scan < lineRange.location && scan < [text length]) {
+			NSRange previous = [text lineRangeForRange:NSMakeRange(scan, 0)];
+			NSString *previousIndent = nil;
+			NSString *previousMarker = nil;
+			if (NVWritingFence(NVCoreOfLine([text substringWithRange:previous]), &previousIndent, &previousMarker) && [previousMarker isEqualToString:marker])
+				seen++;
+			if (NSMaxRange(previous) <= scan)
+				break;
+			scan = NSMaxRange(previous);
+		}
+		if (seen % 2 == 0) {
+			NSString *insertion = [NSString stringWithFormat:@"\n%@\n%@%@", indent, indent, marker];
+			if ([self shouldChangeTextInRange:selection replacementString:insertion]) {
+				[self replaceCharactersInRange:selection withString:insertion];
+				[self didChangeText];
+				[self setSelectedRange:NSMakeRange(selection.location + 1 + [indent length], 0)];
+				[self scrollRangeToVisible:[self selectedRange]];
+			}
+			return YES;
+		}
+	}
+	NSString *prefix = nil;
+	NSString *rest = nil;
+	if (NVBlockquoteParts(core, &prefix, &rest)) {
+		if (![[rest stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] length]) {
+			if ([self shouldChangeTextInRange:lineRange replacementString:@"\n"]) {
+				[self replaceCharactersInRange:lineRange withString:@"\n"];
+				[self didChangeText];
+				[self setSelectedRange:NSMakeRange(lineRange.location, 0)];
+			}
+			return YES;
+		}
+		NSString *insertion = [@"\n" stringByAppendingString:prefix];
+		if ([self shouldChangeTextInRange:selection replacementString:insertion]) {
+			[self replaceCharactersInRange:selection withString:insertion];
+			[self didChangeText];
+			[self setSelectedRange:NSMakeRange(selection.location + [insertion length], 0)];
+			[self scrollRangeToVisible:[self selectedRange]];
+		}
+		return YES;
+	}
+	return NO;
+}
+
+- (BOOL)adjustBlockquoteIndent:(BOOL)outdent {
+	NSString *text = [self string];
+	NSRange selection = [self selectedRange];
+	if (![text length] || selection.location > [text length])
+		return NO;
+	NSUInteger start = MIN(selection.location, [text length]);
+	NSUInteger endLocation = selection.length ? NSMaxRange(selection) : selection.location;
+	if (endLocation > [text length])
+		endLocation = [text length];
+	if (selection.length && endLocation)
+		endLocation -= 1;
+	NSRange firstLine = NVLineRangeForCaret(text, start);
+	NSRange lastLine = NVLineRangeForCaret(text, endLocation);
+	NSMutableArray *lines = [NSMutableArray array];
+	NSUInteger scan = firstLine.location;
+	BOOL found = NO;
+	while (scan <= lastLine.location && scan < [text length]) {
+		NSRange lineRange = [text lineRangeForRange:NSMakeRange(scan, 0)];
+		if (NVBlockquoteParts(NVCoreOfLine([text substringWithRange:lineRange]), NULL, NULL))
+			found = YES;
+		[lines addObject:[NSValue valueWithRange:lineRange]];
+		if (NSMaxRange(lineRange) <= scan)
+			break;
+		scan = NSMaxRange(lineRange);
+	}
+	if (!found)
+		return NO;
+	[[self undoManager] beginUndoGrouping];
+	NSInteger lineIndex;
+	for (lineIndex = (NSInteger)[lines count] - 1; lineIndex >= 0; lineIndex--) {
+		NSRange lineRange = [[lines objectAtIndex:(NSUInteger)lineIndex] rangeValue];
+		text = [self string];
+		if (NSMaxRange(lineRange) > [text length])
+			continue;
+		NSString *prefix = nil;
+		NSString *rest = nil;
+		if (!NVBlockquoteParts(NVCoreOfLine([text substringWithRange:lineRange]), &prefix, &rest))
+			continue;
+		NSRange edited = NSMakeRange(NSNotFound, 0);
+		NSString *change = nil;
+		if (outdent) {
+			NSRange quote = [prefix rangeOfString:@">" options:NSBackwardsSearch];
+			if (quote.location == NSNotFound)
+				continue;
+			NSUInteger remove = 1;
+			if (NSMaxRange(quote) < [prefix length] && [prefix characterAtIndex:NSMaxRange(quote)] == ' ')
+				remove = 2;
+			edited = NSMakeRange(lineRange.location + quote.location, remove);
+			change = @"";
+		} else {
+			edited = NSMakeRange(lineRange.location + [prefix length], 0);
+			change = @"> ";
+		}
+		if (![self shouldChangeTextInRange:edited replacementString:change])
+			continue;
+		[self replaceCharactersInRange:edited withString:change];
+		NSInteger delta = (NSInteger)[change length] - (NSInteger)edited.length;
+		if (NSMaxRange(edited) <= selection.location)
+			selection.location += delta;
+		else if (edited.location < NSMaxRange(selection)) {
+			if (edited.location <= selection.location)
+				selection.location = edited.location + [change length];
+			NSInteger newLength = (NSInteger)selection.length + delta;
+			selection.length = newLength > 0 ? (NSUInteger)newLength : 0;
+		}
+	}
+	NSUInteger editedLength = [[self string] length];
+	if (selection.location > editedLength)
+		selection.location = editedLength;
+	if (NSMaxRange(selection) > editedLength)
+		selection.length = editedLength - selection.location;
+	[self setSelectedRange:selection];
+	[self didChangeText];
+	[[self undoManager] setActionName:outdent ? NSLocalizedString(@"Outdent Quote", nil) : NSLocalizedString(@"Indent Quote", nil)];
+	[[self undoManager] endUndoGrouping];
+	return YES;
+}
+
+- (NSString *)singleURLOnPasteboard:(NSPasteboard *)pasteboard {
+	NSString *string = [pasteboard stringForType:NSPasteboardTypeString];
+	NSString *trimmed = [string stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+	if (![trimmed length] || [trimmed rangeOfCharacterFromSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].location != NSNotFound)
+		return nil;
+	NSURL *url = [NSURL URLWithString:trimmed];
+	if (!url || ![url scheme] || ![url host] && [[url scheme] caseInsensitiveCompare:@"mailto"] != NSOrderedSame)
+		return nil;
+	NSString *scheme = [[url scheme] lowercaseString];
+	if ([scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"] || [scheme isEqualToString:@"mailto"] || [scheme isEqualToString:@"ftp"])
+		return trimmed;
+	return nil;
+}
+
+- (void)paste:(id)sender {
+	if (![self markdownCompletionsEnabled]) {
+		[super paste:sender];
+		return;
+	}
+	NSString *urlString = [self singleURLOnPasteboard:[NSPasteboard generalPasteboard]];
+	if (![urlString length]) {
+		[super paste:sender];
+		return;
+	}
+	NSString *text = [self string];
+	NSRange selection = [self selectedRange];
+	NSString *replacement = nil;
+	if (selection.length && NSMaxRange(selection) <= [text length]) {
+		replacement = [NSString stringWithFormat:@"[%@](%@)", [text substringWithRange:selection], urlString];
+	} else {
+		NSRange lineRange = [text lineRangeForRange:NSMakeRange(MIN(selection.location, [text length]), 0)];
+		NSString *core = NVCoreOfLine([text substringWithRange:lineRange]);
+		NSUInteger cursor = selection.location - lineRange.location;
+		if (cursor > [core length])
+			cursor = [core length];
+		BOOL reference = NO;
+		NSUInteger index = 0;
+		while (index < [core length] && index < 3 && [core characterAtIndex:index] == ' ')
+			index++;
+		if (index < [core length] && [core characterAtIndex:index] == '[') {
+			NSRange end = [core rangeOfString:@"]:" options:0 range:NSMakeRange(index, [core length] - index)];
+			reference = end.location != NSNotFound;
+		}
+		BOOL insideParens = NO;
+		if (cursor <= [core length]) {
+			NSRange open = [core rangeOfString:@"(" options:NSBackwardsSearch range:NSMakeRange(0, cursor)];
+			if (open.location != NSNotFound) {
+				NSRange close = [core rangeOfString:@")" options:0 range:NSMakeRange(cursor, [core length] - cursor)];
+				insideParens = close.location != NSNotFound;
+			}
+		}
+		replacement = (reference || insideParens) ? urlString : [NSString stringWithFormat:@"<%@>", urlString];
+	}
+	if ([self shouldChangeTextInRange:selection replacementString:replacement]) {
+		[self replaceCharactersInRange:selection withString:replacement];
+		[self setSelectedRange:NSMakeRange(selection.location + [replacement length], 0)];
+		[self didChangeText];
+	}
+}
+
+- (BOOL)coreIsBlank:(NSString *)core {
+	return [[core stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] length] == 0;
+}
+
+- (NSUInteger)leadingIndentOfCore:(NSString *)core {
+	return NVListIndentWidth(core, [core length], [self listTabWidth], NULL);
+}
+
+- (BOOL)coreIsListItem:(NSString *)core indent:(NSUInteger *)indent {
+	NSUInteger markerIndex = 0;
+	NSUInteger width = NVListIndentWidth(core, [core length], [self listTabWidth], &markerIndex);
+	if (indent)
+		*indent = width;
+	return NVNumberedMarker(core, [core length], markerIndex, NULL, NULL) || NVBulletMarker(core, [core length], markerIndex);
+}
+
+- (NSRange)listBlockFromItemLine:(NSRange)itemLine inText:(NSString *)text indent:(NSUInteger)indent {
+	NSUInteger end = NSMaxRange(itemLine);
+	while (end < [text length]) {
+		NSRange line = [text lineRangeForRange:NSMakeRange(end, 0)];
+		NSString *core = NVCoreOfLine([text substringWithRange:line]);
+		if ([self coreIsBlank:core]) {
+			NSUInteger peek = NSMaxRange(line);
+			BOOL keep = NO;
+			while (peek < [text length]) {
+				NSRange next = [text lineRangeForRange:NSMakeRange(peek, 0)];
+				NSString *nextCore = NVCoreOfLine([text substringWithRange:next]);
+				if ([self coreIsBlank:nextCore]) {
+					peek = NSMaxRange(next);
+					continue;
+				}
+				keep = [self leadingIndentOfCore:nextCore] > indent;
+				break;
+			}
+			if (!keep)
+				break;
+		} else if ([self leadingIndentOfCore:core] <= indent) {
+			break;
+		}
+		end = NSMaxRange(line);
+	}
+	return NSMakeRange(itemLine.location, end - itemLine.location);
+}
+
+- (NSRange)movableBlockAtLocation:(NSUInteger)location inText:(NSString *)text listItem:(BOOL *)isList indent:(NSUInteger *)outIndent {
+	if (isList)
+		*isList = NO;
+	if (outIndent)
+		*outIndent = 0;
+	if (![text length])
+		return NSMakeRange(0, 0);
+	if (location > [text length])
+		location = [text length];
+	NSRange outer = NSMakeRange(NSNotFound, 0);
+	if ([self markdownFenceAroundLocation:MIN(location, [text length] - 1) inner:NULL outer:&outer] && location >= outer.location && location <= NSMaxRange(outer))
+		return outer;
+	NSUInteger lineLocation = MIN(location, [text length] - 1);
+	NSRange line = [text lineRangeForRange:NSMakeRange(lineLocation, 0)];
+	NSString *core = NVCoreOfLine([text substringWithRange:line]);
+	if ([self coreIsBlank:core])
+		return line;
+	NSUInteger indent = 0;
+	if ([self coreIsListItem:core indent:&indent]) {
+		if (isList)
+			*isList = YES;
+		if (outIndent)
+			*outIndent = indent;
+		return [self listBlockFromItemLine:line inText:text indent:indent];
+	}
+	NSUInteger myIndent = [self leadingIndentOfCore:core];
+	NSRange scan = line;
+	while (scan.location > 0) {
+		NSRange previous = [text lineRangeForRange:NSMakeRange(scan.location - 1, 0)];
+		NSString *previousCore = NVCoreOfLine([text substringWithRange:previous]);
+		if ([self coreIsBlank:previousCore]) {
+			scan = previous;
+			continue;
+		}
+		NSUInteger previousIndent = 0;
+		BOOL previousIsList = [self coreIsListItem:previousCore indent:&previousIndent];
+		if (previousIsList && previousIndent < myIndent) {
+			NSRange block = [self listBlockFromItemLine:previous inText:text indent:previousIndent];
+			if (location >= block.location && location <= NSMaxRange(block)) {
+				if (isList)
+					*isList = YES;
+				if (outIndent)
+					*outIndent = previousIndent;
+				return block;
+			}
+		}
+		if (previousIndent < myIndent || previousIsList)
+			break;
+		scan = previous;
+	}
+	return line;
+}
+
+- (BOOL)blockAdjacentTo:(NSRange)block movingDown:(BOOL)movingDown isList:(BOOL)isList indent:(NSUInteger)indent inText:(NSString *)text block:(NSRange *)outBlock separator:(NSRange *)outSeparator {
+	if (movingDown) {
+		if (NSMaxRange(block) >= [text length])
+			return NO;
+		NSRange scan = [text lineRangeForRange:NSMakeRange(NSMaxRange(block), 0)];
+		while ([self coreIsBlank:NVCoreOfLine([text substringWithRange:scan])]) {
+			if (NSMaxRange(scan) >= [text length])
+				return NO;
+			scan = [text lineRangeForRange:NSMakeRange(NSMaxRange(scan), 0)];
+		}
+		NSRange fence = NSMakeRange(NSNotFound, 0);
+		NSString *core = NVCoreOfLine([text substringWithRange:scan]);
+		NSUInteger nextIndent = 0;
+		BOOL nextIsList = [self coreIsListItem:core indent:&nextIndent];
+		if (isList && nextIsList && nextIndent != indent)
+			return NO;
+		NSRange next = scan;
+		if ([self markdownFenceAroundLocation:scan.location inner:NULL outer:&fence] && fence.location <= scan.location)
+			next = fence;
+		else if (nextIsList)
+			next = [self listBlockFromItemLine:scan inText:text indent:nextIndent];
+		if (next.location < NSMaxRange(block))
+			return NO;
+		*outBlock = next;
+		*outSeparator = NSMakeRange(NSMaxRange(block), next.location - NSMaxRange(block));
+		return YES;
+	}
+	if (block.location == 0)
+		return NO;
+	NSRange scan = [text lineRangeForRange:NSMakeRange(block.location - 1, 0)];
+	while ([self coreIsBlank:NVCoreOfLine([text substringWithRange:scan])]) {
+		if (scan.location == 0)
+			return NO;
+		scan = [text lineRangeForRange:NSMakeRange(scan.location - 1, 0)];
+	}
+	NSRange contentLine = scan;
+	NSRange anchor = NSMakeRange(NSNotFound, 0);
+	while (1) {
+		NSString *core = NVCoreOfLine([text substringWithRange:scan]);
+		if ([self coreIsBlank:core]) {
+			if (scan.location == 0)
+				return NO;
+			scan = [text lineRangeForRange:NSMakeRange(scan.location - 1, 0)];
+			continue;
+		}
+		NSUInteger lineIndent = 0;
+		BOOL lineIsList = [self coreIsListItem:core indent:&lineIndent];
+		NSUInteger boundary = isList ? indent : 0;
+		if (isList && lineIsList && lineIndent == indent) {
+			anchor = scan;
+			break;
+		}
+		if (isList && lineIsList && lineIndent < indent)
+			return NO;
+		if (lineIndent > boundary) {
+			if (scan.location == 0)
+				return NO;
+			scan = [text lineRangeForRange:NSMakeRange(scan.location - 1, 0)];
+			continue;
+		}
+		anchor = scan;
+		break;
+	}
+	if (anchor.location == NSNotFound)
+		return NO;
+	NSRange fence = NSMakeRange(NSNotFound, 0);
+	NSString *anchorCore = NVCoreOfLine([text substringWithRange:anchor]);
+	NSUInteger anchorIndent = 0;
+	BOOL anchorIsList = [self coreIsListItem:anchorCore indent:&anchorIndent];
+	NSRange previous = NSMakeRange(anchor.location, NSMaxRange(contentLine) - anchor.location);
+	if ([self markdownFenceAroundLocation:anchor.location inner:NULL outer:&fence] && fence.location <= anchor.location && NSMaxRange(fence) <= NSMaxRange(contentLine))
+		previous = fence;
+	else if (anchorIsList)
+		previous = [self listBlockFromItemLine:anchor inText:text indent:anchorIndent];
+	if (NSMaxRange(previous) > block.location)
+		return NO;
+	*outBlock = previous;
+	*outSeparator = NSMakeRange(NSMaxRange(previous), block.location - NSMaxRange(previous));
+	return YES;
+}
+
+- (NSString *)stringByJoiningMovableParts:(NSArray *)parts {
+	NSMutableString *result = [NSMutableString string];
+	NSUInteger index;
+	for (index = 0; index < [parts count]; index++) {
+		NSString *part = [parts objectAtIndex:index];
+		if (![part length])
+			continue;
+		if ([result length]) {
+			unichar last = [result characterAtIndex:[result length] - 1];
+			if (last != '\n' && last != '\r')
+				[result appendString:@"\n"];
+		}
+		[result appendString:part];
+	}
+	return result;
+}
+
+- (void)moveCurrentBlockDown:(BOOL)movingDown {
+	NSString *text = [self string];
+	NSRange selection = [self selectedRange];
+	if (![text length])
+		return;
+	NSUInteger location = MIN(selection.location, [text length]);
+	BOOL isList = NO;
+	NSUInteger indent = 0;
+	NSRange block = [self movableBlockAtLocation:location inText:text listItem:&isList indent:&indent];
+	NSRange other = NSMakeRange(NSNotFound, 0);
+	NSRange separator = NSMakeRange(0, 0);
+	if (![self blockAdjacentTo:block movingDown:movingDown isList:isList indent:indent inText:text block:&other separator:&separator])
+		return;
+	NSRange earlier = movingDown ? block : other;
+	NSRange later = movingDown ? other : block;
+	NSString *earlierText = [text substringWithRange:earlier];
+	NSString *middleText = separator.length ? [text substringWithRange:separator] : @"";
+	NSString *laterText = [text substringWithRange:later];
+	NSString *currentText = [text substringWithRange:block];
+	NSString *replacement = [self stringByJoiningMovableParts:[NSArray arrayWithObjects:laterText, middleText, earlierText, nil]];
+	NSRange span = NSMakeRange(earlier.location, NSMaxRange(later) - earlier.location);
+	NSUInteger destination = earlier.location;
+	if (movingDown) {
+		NSString *head = [self stringByJoiningMovableParts:[NSArray arrayWithObjects:laterText, middleText, nil]];
+		destination += [head length];
+		if ([head length] && [earlierText length]) {
+			unichar last = [head characterAtIndex:[head length] - 1];
+			if (last != '\n' && last != '\r')
+				destination++;
+		}
+	}
+	NSUInteger relative = 0;
+	if (selection.location >= block.location)
+		relative = selection.location - block.location;
+	if (relative > [currentText length])
+		relative = [currentText length];
+	if (![self shouldChangeTextInRange:span replacementString:replacement])
+		return;
+	[[self undoManager] beginUndoGrouping];
+	[self replaceCharactersInRange:span withString:replacement];
+	NSUInteger caret = destination + relative;
+	if (caret > [[self string] length])
+		caret = [[self string] length];
+	[self setSelectedRange:NSMakeRange(caret, 0)];
+	[self scrollRangeToVisible:[self selectedRange]];
+	[self didChangeText];
+	NSString *name = nil;
+	if (isList)
+		name = movingDown ? NSLocalizedString(@"Move List Item Down", nil) : NSLocalizedString(@"Move List Item Up", nil);
+	else
+		name = movingDown ? NSLocalizedString(@"Move Paragraph Down", nil) : NSLocalizedString(@"Move Paragraph Up", nil);
+	[[self undoManager] setActionName:name];
+	[[self undoManager] endUndoGrouping];
+}
+
+- (void)moveCurrentParagraphUp {
+	[self moveCurrentBlockDown:NO];
+}
+
+- (void)moveCurrentParagraphDown {
+	[self moveCurrentBlockDown:YES];
+}
+
+- (NSRange)markdownWordAtLocation:(NSUInteger)location {
+	NSString *text = [self string];
+	if (![text length])
+		return NSMakeRange(location, 0);
+	if (location >= [text length])
+		location = [text length] - 1;
+	NSCharacterSet *breaks = [[NSCharacterSet alphanumericCharacterSet] invertedSet];
+	NSUInteger start = location;
+	while (start > 0 && ![breaks characterIsMember:[text characterAtIndex:start - 1]])
+		start--;
+	NSUInteger end = location;
+	while (end < [text length] && ![breaks characterIsMember:[text characterAtIndex:end]])
+		end++;
+	return NSMakeRange(start, end - start);
+}
+
+- (NSRange)markdownSentenceAtLocation:(NSUInteger)location {
+	NSString *text = [self string];
+	if (![text length])
+		return NSMakeRange(location, 0);
+	if (location >= [text length])
+		location = [text length] - 1;
+	NSCharacterSet *stops = [NSCharacterSet characterSetWithCharactersInString:@".!?"];
+	NSInteger start = (NSInteger)location;
+	while (start > 0) {
+		unichar character = [text characterAtIndex:(NSUInteger)start - 1];
+		if (character == '\n')
+			break;
+		if ([stops characterIsMember:character]) {
+			start++;
+			while (start < (NSInteger)[text length]) {
+				unichar next = [text characterAtIndex:(NSUInteger)start];
+				if (next == ' ' || next == '\t' || next == '"' || next == '\'')
+					start++;
+				else
+					break;
+			}
+			break;
+		}
+		start--;
+	}
+	NSUInteger end = location;
+	while (end < [text length]) {
+		unichar character = [text characterAtIndex:end];
+		if (character == '\n')
+			break;
+		if ([stops characterIsMember:character]) {
+			end++;
+			while (end < [text length]) {
+				unichar next = [text characterAtIndex:end];
+				if (next == '"' || next == '\'' || next == ')')
+					end++;
+				else
+					break;
+			}
+			break;
+		}
+		end++;
+	}
+	if (end <= (NSUInteger)start)
+		return NSMakeRange(location, 0);
+	return NSMakeRange((NSUInteger)start, end - (NSUInteger)start);
+}
+
+- (BOOL)markdownDelimiterAroundLocation:(NSUInteger)location inner:(NSRange *)inner outer:(NSRange *)outer {
+	NSString *text = [self string];
+	if (![text length] || location >= [text length])
+		return NO;
+	NSInteger index;
+	for (index = (NSInteger)location; index >= 0; index--) {
+		unichar character = [text characterAtIndex:(NSUInteger)index];
+		unichar close = 0;
+		if (character == '(') close = ')';
+		else if (character == '[') close = ']';
+		else if (character == '{') close = '}';
+		else if (character == '"' || character == '\'') close = character;
+		else continue;
+		NSUInteger scan;
+		for (scan = (NSUInteger)index + 1; scan < [text length]; scan++) {
+			unichar next = [text characterAtIndex:scan];
+			if (next == '\n')
+				break;
+			if (next == close) {
+				if (location >= (NSUInteger)index && location <= scan) {
+					if (inner)
+						*inner = NSMakeRange((NSUInteger)index + 1, scan - (NSUInteger)index - 1);
+					if (outer)
+						*outer = NSMakeRange((NSUInteger)index, scan - (NSUInteger)index + 1);
+					return YES;
+				}
+				break;
+			}
+		}
+	}
+	return NO;
+}
+
+- (BOOL)markdownFenceAroundLocation:(NSUInteger)location inner:(NSRange *)inner outer:(NSRange *)outer {
+	NSString *text = [self string];
+	if (![text length] || location > [text length])
+		return NO;
+	NSUInteger scan = 0;
+	NSRange open = NSMakeRange(NSNotFound, 0);
+	NSString *marker = nil;
+	while (scan < [text length]) {
+		NSRange line = [text lineRangeForRange:NSMakeRange(scan, 0)];
+		NSString *found = nil;
+		if (NVWritingFence(NVCoreOfLine([text substringWithRange:line]), NULL, &found)) {
+			if (!marker) {
+				marker = found;
+				open = line;
+			} else if ([found isEqualToString:marker]) {
+				if (location >= open.location && location <= NSMaxRange(line)) {
+					if (outer)
+						*outer = NSMakeRange(open.location, NSMaxRange(line) - open.location);
+					if (inner) {
+						NSUInteger start = NSMaxRange(open);
+						NSUInteger end = line.location;
+						*inner = end > start ? NSMakeRange(start, end - start) : NSMakeRange(start, 0);
+					}
+					return YES;
+				}
+				marker = nil;
+				open = NSMakeRange(NSNotFound, 0);
+			}
+		}
+		if (NSMaxRange(line) <= scan)
+			break;
+		scan = NSMaxRange(line);
+	}
+	if (marker && location >= open.location) {
+		if (outer)
+			*outer = NSMakeRange(open.location, [text length] - open.location);
+		if (inner) {
+			NSUInteger start = NSMaxRange(open);
+			*inner = start <= [text length] ? NSMakeRange(start, [text length] - start) : NSMakeRange(location, 0);
+		}
+		return YES;
+	}
+	return NO;
+}
+
+- (NSRange)markdownSelectionForLevel:(NSInteger)level atLocation:(NSUInteger)location {
+	NSString *text = [self string];
+	if (![text length])
+		return NSMakeRange(location, 0);
+	if (location > [text length])
+		location = [text length];
+	if (level == 1)
+		return [self markdownWordAtLocation:location];
+	if (level == 2 || level == 3) {
+		NSRange inner = NSMakeRange(NSNotFound, 0);
+		NSRange outer = NSMakeRange(NSNotFound, 0);
+		if ([self markdownDelimiterAroundLocation:location inner:&inner outer:&outer])
+			return level == 2 ? inner : outer;
+		if ([self markdownFenceAroundLocation:location inner:&inner outer:&outer])
+			return level == 2 ? inner : outer;
+		return NSMakeRange(location, 0);
+	}
+	if (level == 4)
+		return [self markdownSentenceAtLocation:location];
+	if (level == 5)
+		return [text paragraphRangeForRange:NSMakeRange(location, 0)];
+	if (level == 6) {
+		NSRange line = [text lineRangeForRange:NSMakeRange(location, 0)];
+		NSCharacterSet *ink = [[NSCharacterSet whitespaceAndNewlineCharacterSet] invertedSet];
+		if ([NVCoreOfLine([text substringWithRange:line]) rangeOfCharacterFromSet:ink].location == NSNotFound)
+			return NSMakeRange(location, 0);
+		NSUInteger start = line.location;
+		NSUInteger end = NSMaxRange(line);
+		while (start > 0) {
+			NSRange previous = [text lineRangeForRange:NSMakeRange(start - 1, 0)];
+			if ([NVCoreOfLine([text substringWithRange:previous]) rangeOfCharacterFromSet:ink].location == NSNotFound)
+				break;
+			start = previous.location;
+		}
+		while (end < [text length]) {
+			NSRange next = [text lineRangeForRange:NSMakeRange(end, 0)];
+			if ([NVCoreOfLine([text substringWithRange:next]) rangeOfCharacterFromSet:ink].location == NSNotFound)
+				break;
+			end = NSMaxRange(next);
+		}
+		return NSMakeRange(start, end - start);
+	}
+	if (level == 7) {
+		NSRange inner = NSMakeRange(NSNotFound, 0);
+		NSRange outer = NSMakeRange(NSNotFound, 0);
+		if ([self markdownFenceAroundLocation:location inner:&inner outer:&outer] && outer.length)
+			return outer;
+		NSRange line = [text lineRangeForRange:NSMakeRange(location, 0)];
+		NSString *core = NVCoreOfLine([text substringWithRange:line]);
+		BOOL quote = NVBlockquoteParts(core, NULL, NULL);
+		NSUInteger tabWidth = [self listTabWidth];
+		NSUInteger markerIndex = 0;
+		NVListIndentWidth(core, [core length], tabWidth, &markerIndex);
+		BOOL list = NVNumberedMarker(core, [core length], markerIndex, NULL, NULL) || NVBulletMarker(core, [core length], markerIndex);
+		if (!quote && !list)
+			return [text paragraphRangeForRange:NSMakeRange(location, 0)];
+		NSUInteger start = line.location;
+		NSUInteger end = NSMaxRange(line);
+		while (start > 0) {
+			NSRange previous = [text lineRangeForRange:NSMakeRange(start - 1, 0)];
+			NSString *previousCore = NVCoreOfLine([text substringWithRange:previous]);
+			BOOL same = quote ? NVBlockquoteParts(previousCore, NULL, NULL) : NO;
+			if (!quote) {
+				NSUInteger previousMarker = 0;
+				NVListIndentWidth(previousCore, [previousCore length], tabWidth, &previousMarker);
+				same = NVNumberedMarker(previousCore, [previousCore length], previousMarker, NULL, NULL) || NVBulletMarker(previousCore, [previousCore length], previousMarker);
+			}
+			if (!same)
+				break;
+			start = previous.location;
+		}
+		while (end < [text length]) {
+			NSRange next = [text lineRangeForRange:NSMakeRange(end, 0)];
+			NSString *nextCore = NVCoreOfLine([text substringWithRange:next]);
+			BOOL same = quote ? NVBlockquoteParts(nextCore, NULL, NULL) : NO;
+			if (!quote) {
+				NSUInteger nextMarker = 0;
+				NVListIndentWidth(nextCore, [nextCore length], tabWidth, &nextMarker);
+				same = NVNumberedMarker(nextCore, [nextCore length], nextMarker, NULL, NULL) || NVBulletMarker(nextCore, [nextCore length], nextMarker);
+			}
+			if (!same)
+				break;
+			end = NSMaxRange(next);
+		}
+		return NSMakeRange(start, end - start);
+	}
+	if (level >= 8)
+		return NSMakeRange(0, [text length]);
+	return NSMakeRange(location, 0);
+}
+
+- (void)expandMarkdownSelection {
+	NSString *text = [self string];
+	NSRange selection = [self selectedRange];
+	if (markdownSelectionLevel <= 0 || selection.length == 0) {
+		markdownSelectionAnchor = MIN(selection.location, [text length]);
+		markdownSelectionLevel = 0;
+	}
+	NSRange current = selection;
+	NSInteger level;
+	for (level = markdownSelectionLevel + 1; level <= 8; level++) {
+		NSRange range = [self markdownSelectionForLevel:level atLocation:markdownSelectionAnchor];
+		if (!range.length || NSEqualRanges(range, current))
+			continue;
+		markdownSelectionLevel = level;
+		markdownAdjustingSelection = YES;
+		[self setSelectedRange:range];
+		markdownAdjustingSelection = NO;
+		[self scrollRangeToVisible:range];
+		return;
+	}
+}
+
+- (void)shrinkMarkdownSelection {
+	if (markdownSelectionLevel <= 0)
+		return;
+	if (markdownSelectionLevel == 1) {
+		markdownAdjustingSelection = YES;
+		[self setSelectedRange:NSMakeRange(MIN(markdownSelectionAnchor, [[self string] length]), 0)];
+		markdownAdjustingSelection = NO;
+		markdownSelectionLevel = 0;
+		return;
+	}
+	NSInteger level;
+	for (level = markdownSelectionLevel - 1; level >= 1; level--) {
+		NSRange range = [self markdownSelectionForLevel:level atLocation:markdownSelectionAnchor];
+		if (!range.length)
+			continue;
+		markdownSelectionLevel = level;
+		markdownAdjustingSelection = YES;
+		[self setSelectedRange:range];
+		markdownAdjustingSelection = NO;
+		[self scrollRangeToVisible:range];
+		return;
+	}
+}
+
+- (BOOL)writingLocationInsideFence:(NSUInteger)location {
+	NSRange inner = NSMakeRange(NSNotFound, 0);
+	NSRange outer = NSMakeRange(NSNotFound, 0);
+	if (![self markdownFenceAroundLocation:location inner:&inner outer:&outer])
+		return NO;
+	return location > outer.location && location < NSMaxRange(outer) && location >= inner.location && location <= NSMaxRange(inner);
+}
+
+static NSString *NVRegexLiteral(NSString *text) {
+	NSCharacterSet *specials = [NSCharacterSet characterSetWithCharactersInString:@"\\.^$|?*+()[]{}"];
+	NSMutableString *escaped = [NSMutableString stringWithCapacity:[text length]];
+	NSUInteger index;
+	for (index = 0; index < [text length]; index++) {
+		unichar character = [text characterAtIndex:index];
+		if ([specials characterIsMember:character])
+			[escaped appendString:@"\\"];
+		[escaped appendFormat:@"%C", character];
+	}
+	return escaped;
+}
+
+- (NSUInteger)highestMagicNumberForFootnote:(BOOL)footnote {
+	NSString *text = [self string];
+	NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:(footnote ? @"\\[\\^(\\d+)\\]" : @"(?<!\\^)\\[(\\d+)\\]") options:0 error:nil];
+	__block NSUInteger highest = 0;
+	[regex enumerateMatchesInString:text options:0 range:NSMakeRange(0, [text length]) usingBlock:^(NSTextCheckingResult *result, NSMatchingFlags flags, BOOL *stop) {
+		NSRange numberRange = [result rangeAtIndex:1];
+		if (numberRange.location == NSNotFound)
+			return;
+		NSUInteger value = (NSUInteger)[[text substringWithRange:numberRange] integerValue];
+		if (value > highest)
+			highest = value;
+	}];
+	return highest;
+}
+
+- (void)revealSelectedRange {
+	NSString *text = [self string];
+	NSRange selection = [self selectedRange];
+	if (![text length] || selection.location > [text length]) {
+		[self scrollRangeToVisible:selection];
+		return;
+	}
+	NSUInteger index = selection.location == [text length] ? [text length] - 1 : selection.location;
+	NSRange line = [text lineRangeForRange:NSMakeRange(index, 0)];
+	NSLayoutManager *layout = [self layoutManager];
+	NSTextContainer *container = [self textContainer];
+	if (!layout || !container || !line.length) {
+		[self scrollRangeToVisible:line.length ? line : selection];
+		return;
+	}
+	[layout ensureLayoutForCharacterRange:line];
+	NSRange glyphRange = [layout glyphRangeForCharacterRange:line actualCharacterRange:NULL];
+	if (!glyphRange.length) {
+		[self scrollRangeToVisible:line];
+		return;
+	}
+	NSRect rect = [layout boundingRectForGlyphRange:glyphRange inTextContainer:container];
+	NSPoint origin = [self textContainerOrigin];
+	rect.origin.x += origin.x;
+	rect.origin.y += origin.y;
+	rect = NSInsetRect(rect, 0.0, -40.0);
+	[self scrollRectToVisible:rect];
+}
+
+- (void)appendMagicDefinition:(NSString *)definition {
+	NSString *text = [self string];
+	NSString *gap = @"";
+	if ([text length] && ![text hasSuffix:@"\n\n"])
+		gap = [text hasSuffix:@"\n"] ? @"\n" : @"\n\n";
+	NSString *insertion = [gap stringByAppendingString:definition];
+	NSUInteger location = [text length];
+	if ([self shouldChangeTextInRange:NSMakeRange(location, 0) replacementString:insertion]) {
+		[self replaceCharactersInRange:NSMakeRange(location, 0) withString:insertion];
+		[self didChangeText];
+		[self setSelectedRange:NSMakeRange(location + [insertion length], 0)];
+		[self revealSelectedRange];
+	}
+}
+
+- (BOOL)insertOrJumpMagicReference {
+	NSString *text = [self string];
+	NSRange selection = [self selectedRange];
+	NSUInteger probe = MIN(selection.location, [text length]);
+	if ([self writingLocationInsideFence:probe])
+		return YES;
+	NSRange lineRange = [text lineRangeForRange:NSMakeRange(probe, 0)];
+	NSString *line = [text substringWithRange:lineRange];
+	NSRegularExpression *definition = [NSRegularExpression regularExpressionWithPattern:@"^\\s*\\[([^\\]]+)\\]:" options:0 error:nil];
+	NSTextCheckingResult *definitionMatch = [definition firstMatchInString:line options:0 range:NSMakeRange(0, [line length])];
+	NSRegularExpression *use = [NSRegularExpression regularExpressionWithPattern:@"\\[[^\\]\\n]*\\]\\[([^\\]\\n]+)\\]|\\[([^\\]\\n]+)\\](?![(\\[])" options:0 error:nil];
+	if (definitionMatch) {
+		NSString *identifier = NVRegexLiteral([line substringWithRange:[definitionMatch rangeAtIndex:1]]);
+		NSString *pattern = [NSString stringWithFormat:@"\\[[^\\]\\n]*\\]\\[%@\\]|\\[%@\\](?![(\\[])", identifier, identifier];
+		NSRegularExpression *finder = [NSRegularExpression regularExpressionWithPattern:pattern options:0 error:nil];
+		__block NSRange found = NSMakeRange(NSNotFound, 0);
+		[finder enumerateMatchesInString:text options:0 range:NSMakeRange(0, [text length]) usingBlock:^(NSTextCheckingResult *result, NSMatchingFlags flags, BOOL *stop) {
+			(void)flags;
+			if (NSIntersectionRange([text lineRangeForRange:result.range], lineRange).length)
+				return;
+			found = result.range;
+			*stop = YES;
+		}];
+		if (found.location != NSNotFound) {
+			[self setSelectedRange:NSMakeRange(NSMaxRange(found), 0)];
+			[self revealSelectedRange];
+		}
+		return YES;
+	}
+	for (NSTextCheckingResult *match in [use matchesInString:line options:0 range:NSMakeRange(0, [line length])]) {
+		NSRange token = NSMakeRange(lineRange.location + match.range.location, match.range.length);
+		if (probe < token.location || probe > NSMaxRange(token))
+			continue;
+		NSRange idRange = [match rangeAtIndex:1].location != NSNotFound ? [match rangeAtIndex:1] : [match rangeAtIndex:2];
+		NSString *rawIdentifier = [line substringWithRange:idRange];
+		NSString *pattern = [NSString stringWithFormat:@"^\\s*\\[%@\\]:\\s*", NVRegexLiteral(rawIdentifier)];
+		NSRegularExpression *finder = [NSRegularExpression regularExpressionWithPattern:pattern options:NSRegularExpressionAnchorsMatchLines error:nil];
+		NSTextCheckingResult *found = [finder firstMatchInString:text options:0 range:NSMakeRange(0, [text length])];
+		if (found)
+			[self setSelectedRange:NSMakeRange(NSMaxRange(found.range), 0)];
+		else
+			[self appendMagicDefinition:[NSString stringWithFormat:@"[%@]: ", rawIdentifier]];
+		[self revealSelectedRange];
+		return YES;
+	}
+	if (!selection.length)
+		return YES;
+	NSUInteger number = [self highestMagicNumberForFootnote:NO] + 1;
+	NSString *selected = [text substringWithRange:selection];
+	NSString *marker = [NSString stringWithFormat:@"[%@][%lu]", selected, (unsigned long)number];
+	if (![self shouldChangeTextInRange:selection replacementString:marker])
+		return YES;
+	[self replaceCharactersInRange:selection withString:marker];
+	[self didChangeText];
+	[self appendMagicDefinition:[NSString stringWithFormat:@"[%lu]: ", (unsigned long)number]];
+	return YES;
+}
+
+- (BOOL)insertOrJumpMagicFootnote {
+	NSString *text = [self string];
+	NSRange selection = [self selectedRange];
+	NSUInteger probe = MIN(selection.location, [text length]);
+	if ([self writingLocationInsideFence:probe])
+		return YES;
+	NSRange lineRange = [text lineRangeForRange:NSMakeRange(probe, 0)];
+	NSString *line = [text substringWithRange:lineRange];
+	NSRegularExpression *definition = [NSRegularExpression regularExpressionWithPattern:@"^\\s*\\[\\^(\\d+)\\]:" options:0 error:nil];
+	NSTextCheckingResult *definitionMatch = [definition firstMatchInString:line options:0 range:NSMakeRange(0, [line length])];
+	if (definitionMatch) {
+		NSString *number = [line substringWithRange:[definitionMatch rangeAtIndex:1]];
+		NSRegularExpression *finder = [NSRegularExpression regularExpressionWithPattern:[NSString stringWithFormat:@"\\[\\^%@\\]", number] options:0 error:nil];
+		NSRegularExpression *definitionLine = [NSRegularExpression regularExpressionWithPattern:[NSString stringWithFormat:@"^\\s*\\[\\^%@\\]:", number] options:0 error:nil];
+		__block NSRange found = NSMakeRange(NSNotFound, 0);
+		[finder enumerateMatchesInString:text options:0 range:NSMakeRange(0, [text length]) usingBlock:^(NSTextCheckingResult *result, NSMatchingFlags flags, BOOL *stop) {
+			(void)flags;
+			NSRange matchLine = [text lineRangeForRange:result.range];
+			if ([definitionLine firstMatchInString:text options:0 range:matchLine])
+				return;
+			found = result.range;
+			*stop = YES;
+		}];
+		if (found.location != NSNotFound) {
+			[self setSelectedRange:NSMakeRange(NSMaxRange(found), 0)];
+			[self revealSelectedRange];
+		}
+		return YES;
+	}
+	NSRegularExpression *inlineNote = [NSRegularExpression regularExpressionWithPattern:@"\\[\\^(\\d+)\\]" options:0 error:nil];
+	for (NSTextCheckingResult *match in [inlineNote matchesInString:line options:0 range:NSMakeRange(0, [line length])]) {
+		NSRange token = NSMakeRange(lineRange.location + match.range.location, match.range.length);
+		if (probe < token.location || probe > NSMaxRange(token))
+			continue;
+		NSString *number = [line substringWithRange:[match rangeAtIndex:1]];
+		NSRegularExpression *finder = [NSRegularExpression regularExpressionWithPattern:[NSString stringWithFormat:@"^\\s*\\[\\^%@\\]:\\s*", number] options:NSRegularExpressionAnchorsMatchLines error:nil];
+		NSTextCheckingResult *found = [finder firstMatchInString:text options:0 range:NSMakeRange(0, [text length])];
+		if (found)
+			[self setSelectedRange:NSMakeRange(NSMaxRange(found.range), 0)];
+		else
+			[self appendMagicDefinition:[NSString stringWithFormat:@"[^%@]: ", number]];
+		[self revealSelectedRange];
+		return YES;
+	}
+	NSUInteger number = [self highestMagicNumberForFootnote:YES] + 1;
+	NSString *body = selection.length ? [text substringWithRange:selection] : @"";
+	NSString *marker = [NSString stringWithFormat:@"[^%lu]", (unsigned long)number];
+	NSRange insert = selection.length ? selection : NSMakeRange(probe, 0);
+	if (!selection.length) {
+		NSRange word = [self markdownWordAtLocation:probe];
+		if (word.length && probe > word.location && probe < NSMaxRange(word))
+			insert.location = NSMaxRange(word);
+	}
+	if (![self shouldChangeTextInRange:insert replacementString:marker])
+		return YES;
+	[self replaceCharactersInRange:insert withString:marker];
+	[self didChangeText];
+	[self appendMagicDefinition:[NSString stringWithFormat:@"[^%lu]: %@", (unsigned long)number, body]];
+	return YES;
 }
 
 @end

@@ -22,6 +22,7 @@
 #import "NSBezierPath_NV.h"
 #import "NSString_CustomTruncation.h"
 #import "NoteAttributeColumn.h"
+#import "NVThemeManager.h"
 
 @implementation UnifiedCell
 
@@ -63,11 +64,20 @@
 //}
 //#endif
 
+- (NSText *)setUpFieldEditorAttributes:(NSText *)textObj {
+	NSText *editor = [super setUpFieldEditorAttributes:textObj];
+	if ([editor isKindOfClass:[NSTextView class]] && [[self controlView] isKindOfClass:[NotesTableView class]])
+		[(NotesTableView *)[self controlView] nv_contrastFieldEditor:(NSTextView *)editor];
+	return editor;
+}
+
 - (void)selectWithFrame:(NSRect)aRect inView:(NSView *)controlView editor:(NSText *)textObj 
 			   delegate:(id)anObject start:(NSInteger)selStart length:(NSInteger)selLength {
 	
 	NSRect rect = [(NotesTableView*)controlView lastEventActivatedTagEdit] ? [self nv_tagsRectForFrame:aRect] : [self nv_titleRectForFrame:aRect];
 	[super selectWithFrame:rect inView:controlView editor:textObj delegate:anObject start:selStart length:selLength];
+	if ([textObj isKindOfClass:[NSTextView class]])
+		[(NotesTableView *)controlView nv_contrastFieldEditor:(NSTextView *)textObj];
 	
 	[controlView setKeyboardFocusRingNeedsDisplayInRect:NSInsetRect([self nv_tagsRectForFrame:aRect], -3, -3)];
 }
@@ -180,9 +190,25 @@ NSAttributedString *AttributedStringForSelection(NSAttributedString *str, BOOL w
 	//draw note date and tags
 
 	NSMutableDictionary *baseAttrs = [self baseTextAttributes];
-	BOOL isActive = (IsLeopardOrLater && [tv selectionHighlightStyle] == NSTableViewSelectionHighlightStyleSourceList) ? YES : [tv isActiveStyle];
+	BOOL isActive = [tv isActiveStyle];
+	BOOL lightRow = [tv usesLightRowBackground];
 	
-	NSColor *textColor = ([self isHighlighted] && isActive) ? [NSColor whiteColor] : (![self isHighlighted] ? [[self class] dateColorForTint]/*[NSColor grayColor]*/ : nil);
+	NSColor *textColor = nil;
+	NVEditorTheme *listTheme = [[NVThemeManager sharedManager] currentEditorTheme];
+	if (listTheme) {
+		if ([self isHighlighted])
+			textColor = isActive ? [listTheme listSelectionForegroundColor] : [listTheme listInactiveSelectionForegroundColor];
+		else {
+			NSColor *listForeground = [listTheme listForegroundColor];
+			NSColor *listBackground = [listTheme listBackgroundColor];
+			textColor = (listForeground && listBackground) ? [listBackground blendedColorWithFraction:0.45 ofColor:listForeground] : listForeground;
+		}
+	} else if ([self isHighlighted] && (isActive || !lightRow))
+		textColor = [NSColor whiteColor];
+	else if ([self isHighlighted])
+		textColor = [NSColor colorWithCalibratedWhite:0.35 alpha:1.0];
+	else
+		textColor = [[self class] dateColorForTint];
 	if (textColor)
 		[baseAttrs setObject:textColor forKey:NSForegroundColorAttributeName];
 	if (IsSnowLeopardOrLater && [self isHighlighted] && ([tv selectionHighlightStyle] == NSTableViewSelectionHighlightStyleSourceList)) {
@@ -219,7 +245,7 @@ NSAttributedString *AttributedStringForSelection(NSAttributedString *str, BOOL w
 		//clip the tags image within the bounds of the cell so that narrow columns look nicer
 		[NSGraphicsContext saveGraphicsState];
 		NSRectClip(cellFrame);
-		[noteObject drawLabelBlocksInRect:rect rightAlign:!previewIsHidden highlighted:([self isHighlighted] && isActive)];
+		[noteObject drawLabelBlocksInRect:rect rightAlign:!previewIsHidden highlighted:([self isHighlighted] && (isActive || !lightRow))];
 		[NSGraphicsContext restoreGraphicsState];
 	}
 	

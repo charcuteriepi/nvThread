@@ -123,7 +123,13 @@ CA
                                     <action selector="importNotes:" target="213" id="986"/>
                                 </connections>
                             </menuItem>
+                            <menuItem title="Importar URL…" keyEquivalent="U" id="nvU1">
+                                <connections>
+                                    <action selector="importURL:" target="213" id="nvU2"/>
+                                </connections>
+                            </menuItem>
                             <menuItem title="Exportar…" tag="94" keyEquivalent="e" id="396">
+                                <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
                                 <connections>
                                     <action selector="exportNote:" target="213" id="988"/>
                                 </connections>
@@ -241,7 +247,7 @@ CA
                                             </connections>
                                         </menuItem>
                                         <menuItem title="Procurar utilizando texto selecionado" tag="7" keyEquivalent="e" id="161">
-                                            <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
+                                            <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                                             <connections>
                                                 <action selector="performFindPanelAction:" target="1218" id="1328"/>
                                             </connections>
@@ -592,8 +598,8 @@ CA
                                     <action selector="toggleSourceView:" target="213" id="1272"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="Lock Note to Preview" keyEquivalent="L" id="1293">
-                                <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
+                            <menuItem title="Lock Note to Preview" id="1293">
+                                <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
                                     <action selector="lockPreview:" target="213" id="1295"/>
                                 </connections>

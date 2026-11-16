@@ -22,7 +22,6 @@
 <NSWindowDelegate, NSToolbarDelegate>
 #endif
 {
-    IBOutlet NSButton *useETScrollbarsOnLionButton;
     IBOutlet NSPopUpButton *folderLocationsMenuButton;
     IBOutlet NSTextField *bodyTextFontField;
     IBOutlet NSMatrix *tabKeyRadioMatrix;
@@ -65,7 +64,6 @@
 }
 - (void)showWindow:(id)sender;
 
-- (IBAction)changedUseETScrollbarsOnLion:(id)sender;
 - (IBAction)changedBackgroundTextColorWell:(id)sender;
 - (IBAction)changedForegroundTextColorWell:(id)sender;
 - (IBAction)changedHighlightSearchTerms:(id)sender;	
@@ -87,6 +85,7 @@
 - (IBAction)changedExternalEditorsMenu:(id)sender;
 - (IBAction)changedTitleCompletion:(id)sender;
 - (IBAction)changedSoftTabs:(id)sender;
+- (IBAction)changedEnterInListRenamesNote:(id)sender;
 - (IBAction)changedUseMarkdownImport:(id)sender;
 - (IBAction)changedUseReadability:(id)sender;
 - (IBAction)changedShowGrid:(id)sender;
@@ -103,8 +102,15 @@
 - (NSView*)databaseView;
 - (void)addToolbarItemWithName:(NSString*)name;
 - (void)switchViews:(NSToolbarItem *)item;
+- (IBAction)changedLogErrorsAndWarnings:(id)sender;
+- (IBAction)changedLogAllDiagnosticMessages:(id)sender;
+- (IBAction)openConsole:(id)sender;
 - (IBAction)toggleHideDockIcon:(id)sender;
 - (IBAction)toggleKeepsTextWidthInWindow:(id)sender;
 - (IBAction)setMaxWidth:(id)sender;
+- (IBAction)changedEditorTheme:(id)sender;
+- (IBAction)changedPreviewTheme:(id)sender;
+- (IBAction)importThemes:(id)sender;
+- (IBAction)openThemesFolder:(id)sender;
 
 @end

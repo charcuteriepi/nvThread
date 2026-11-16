@@ -22,6 +22,14 @@
 		212089B10B0C24F500A15A69 /* AlienNoteImporter.m in Sources */ = {isa = PBXBuildFile; fileRef = 212089B00B0C24F500A15A69 /* AlienNoteImporter.m */; };
 		212089D80B0C2CA500A15A69 /* StickiesDocument.m in Sources */ = {isa = PBXBuildFile; fileRef = 212089D70B0C2CA500A15A69 /* StickiesDocument.m */; };
 		212B84620978422300F3597F /* NSString_NV.m in Sources */ = {isa = PBXBuildFile; fileRef = 212B84610978422300F3597F /* NSString_NV.m */; };
+		B7E1AA031F0A000100000003 /* TagSearch.m in Sources */ = {isa = PBXBuildFile; fileRef = B7E1AA021F0A000100000002 /* TagSearch.m */; };
+		D5A1BB031F0C000100000003 /* NVAutoPair.m in Sources */ = {isa = PBXBuildFile; fileRef = D5A1BB021F0C000100000002 /* NVAutoPair.m */; };
+		F7A1C0DE1F0E000100000003 /* NVLog.m in Sources */ = {isa = PBXBuildFile; fileRef = F7A1C0DE1F0E000100000002 /* NVLog.m */; };
+		F8B2D1EF1F0F000100000003 /* PreviewTruncation.m in Sources */ = {isa = PBXBuildFile; fileRef = F8B2D1EF1F0F000100000002 /* PreviewTruncation.m */; };
+		E6B2CC031F0D000100000003 /* LinkReferenceCompletion.m in Sources */ = {isa = PBXBuildFile; fileRef = E6B2CC021F0D000100000002 /* LinkReferenceCompletion.m */; };
+		C4E1AA031F0B000100000003 /* PreviewRender.m in Sources */ = {isa = PBXBuildFile; fileRef = C4E1AA021F0B000100000002 /* PreviewRender.m */; };
+		A8C3EE031F11000100000001 /* NoteLayout.m in Sources */ = {isa = PBXBuildFile; fileRef = A8C3EE021F11000100000001 /* NoteLayout.m */; };
+		C4E1AA051F0B000100000005 /* preview-js in Resources */ = {isa = PBXBuildFile; fileRef = C4E1AA041F0B000100000004 /* preview-js */; };
 		212C6952110E1940004DD82C /* TitlebarButton.m in Sources */ = {isa = PBXBuildFile; fileRef = 212C6951110E1940004DD82C /* TitlebarButton.m */; };
 		212C6A2A110E371B004DD82C /* TBSynchronizingWhite.png in Resources */ = {isa = PBXBuildFile; fileRef = 212C6A23110E371B004DD82C /* TBSynchronizingWhite.png */; };
 		212C6A2C110E371B004DD82C /* TBDownArrowWhite.png in Resources */ = {isa = PBXBuildFile; fileRef = 212C6A25110E371B004DD82C /* TBDownArrowWhite.png */; };
@@ -64,6 +72,10 @@
 		219192D409CFBC8800586B15 /* NoteAttributeColumn.m in Sources */ = {isa = PBXBuildFile; fileRef = 219192D309CFBC8700586B15 /* NoteAttributeColumn.m */; };
 		2191982209D607C600586B15 /* PrefsWindowController.m in Sources */ = {isa = PBXBuildFile; fileRef = 2191982109D607C600586B15 /* PrefsWindowController.m */; };
 		219588D20961D7F200972B8C /* LinkingEditor.m in Sources */ = {isa = PBXBuildFile; fileRef = 219588D10961D7F200972B8C /* LinkingEditor.m */; };
+		A7E100032F0A000100000001 /* NVTheme.m in Sources */ = {isa = PBXBuildFile; fileRef = A7E100022F0A000100000001 /* NVTheme.m */; };
+		A7E100062F0A000100000001 /* NVThemeManager.m in Sources */ = {isa = PBXBuildFile; fileRef = A7E100052F0A000100000001 /* NVThemeManager.m */; };
+		A7E100082F0A000100000001 /* Paper.theme in Resources */ = {isa = PBXBuildFile; fileRef = A7E100072F0A000100000001 /* Paper.theme */; };
+		A7E1000A2F0A000100000001 /* Paper.css in Resources */ = {isa = PBXBuildFile; fileRef = A7E100092F0A000100000001 /* Paper.css */; };
 		219739FB0AFE42A10046683E /* PassphraseRetriever.m in Sources */ = {isa = PBXBuildFile; fileRef = 219739FA0AFE42A10046683E /* PassphraseRetriever.m */; };
 		21973FF10B0060C80046683E /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21973FBC0B0060C80046683E /* Security.framework */; };
 		219D1BB3110EA66A005E7DF5 /* TBAlert.png in Resources */ = {isa = PBXBuildFile; fileRef = 219D1BB2110EA66A005E7DF5 /* TBAlert.png */; };
@@ -123,26 +135,18 @@
 		5C1830CD132EA687005E2210 /* SaveHTMLPreview.nib in Resources */ = {isa = PBXBuildFile; fileRef = 5C1830CF132EA687005E2210 /* SaveHTMLPreview.nib */; };
 		5C2CC18A134989D7006FFE56 /* nvMenuDark.png in Resources */ = {isa = PBXBuildFile; fileRef = 5C2CC189134989D7006FFE56 /* nvMenuDark.png */; };
 		5C2FAD2B1333970200FBFD34 /* ETScrollView.m in Sources */ = {isa = PBXBuildFile; fileRef = 5C2CD036132ED47900CA0D7C /* ETScrollView.m */; };
-		5C38E2C414223D6900131682 /* ETOverlayScroller.m in Sources */ = {isa = PBXBuildFile; fileRef = 5C38E2C314223D6900131682 /* ETOverlayScroller.m */; };
 		5C43669B1DA268500086FF84 /* Excruciatingly Useful Shortcuts.nvhelp in Resources */ = {isa = PBXBuildFile; fileRef = 5C4366951DA268500086FF84 /* Excruciatingly Useful Shortcuts.nvhelp */; };
 		5C43669C1DA268500086FF84 /* How does this thing work?.nvhelp in Resources */ = {isa = PBXBuildFile; fileRef = 5C4366971DA268500086FF84 /* How does this thing work?.nvhelp */; };
 		5C43669D1DA268500086FF84 /* This is the title of a note.nvhelp in Resources */ = {isa = PBXBuildFile; fileRef = 5C4366991DA268500086FF84 /* This is the title of a note.nvhelp */; };
 		5C4366A01DA283720086FF84 /* ETNoteScrollView.m in Sources */ = {isa = PBXBuildFile; fileRef = 5C43669F1DA283720086FF84 /* ETNoteScrollView.m */; };
 		5C48A28213A54FBD006B73DD /* PassphraseChanger.nib in Resources */ = {isa = PBXBuildFile; fileRef = 214495810ADCC07E00E2A2B6 /* PassphraseChanger.nib */; };
 		5C49E365131C5CC500696B68 /* Credits.html in Resources */ = {isa = PBXBuildFile; fileRef = 5C49E364131C5CC500696B68 /* Credits.html */; };
-		5C4B353E1307220E00014119 /* TransparentScrollerKnobTop.tif in Resources */ = {isa = PBXBuildFile; fileRef = 5C4B35361307220E00014119 /* TransparentScrollerKnobTop.tif */; };
-		5C4B35401307220E00014119 /* TransparentScrollerSlotBottom.tif in Resources */ = {isa = PBXBuildFile; fileRef = 5C4B35381307220E00014119 /* TransparentScrollerSlotBottom.tif */; };
-		5C4B35421307220E00014119 /* TransparentScrollerSlotVerticalFill.tif in Resources */ = {isa = PBXBuildFile; fileRef = 5C4B353A1307220E00014119 /* TransparentScrollerSlotVerticalFill.tif */; };
-		5C4B356A1307225000014119 /* ETTransparentScroller.m in Sources */ = {isa = PBXBuildFile; fileRef = 5C4B35691307225000014119 /* ETTransparentScroller.m */; };
 		5C625D3A19DCAB8E00BF0492 /* ServicesMenu.strings in Resources */ = {isa = PBXBuildFile; fileRef = 2128651C1278AF220013820A /* ServicesMenu.strings */; };
 		5C84319114229D810020E5A7 /* PassphraseRetriever.xib in Resources */ = {isa = PBXBuildFile; fileRef = 5C84319314229D810020E5A7 /* PassphraseRetriever.xib */; };
 		5C8BCF6A1DA25C810036FA7E /* Sparkle.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 213623E50B92AA4E008C0830 /* Sparkle.framework */; };
 		5C8BCF881DA2617C0036FA7E /* Contact.nvhelp in Resources */ = {isa = PBXBuildFile; fileRef = 5C8BCF821DA2617C0036FA7E /* Contact.nvhelp */; };
-		5C94376F132A0C9E00B08B80 /* greyscrollervertbottom3.tif in Resources */ = {isa = PBXBuildFile; fileRef = 5C94376C132A0C9D00B08B80 /* greyscrollervertbottom3.tif */; };
-		5C943771132A0C9E00B08B80 /* greyscrollerverttop3.tif in Resources */ = {isa = PBXBuildFile; fileRef = 5C94376E132A0C9D00B08B80 /* greyscrollerverttop3.tif */; };
 		5C96F4FF131C2F9500A2E4AC /* TabClose_Front_Pressed.tif in Resources */ = {isa = PBXBuildFile; fileRef = 5C96F4FC131C2F9500A2E4AC /* TabClose_Front_Pressed.tif */; };
 		5C96F501131C2F9500A2E4AC /* TabClose_Front.tif in Resources */ = {isa = PBXBuildFile; fileRef = 5C96F4FE131C2F9500A2E4AC /* TabClose_Front.tif */; };
-		5C96F504131C2FA800A2E4AC /* BTTransparentScroller.m in Sources */ = {isa = PBXBuildFile; fileRef = 5C96F502131C2FA800A2E4AC /* BTTransparentScroller.m */; };
 		5C96F566131C35AB00A2E4AC /* __init__.py in CopyFiles */ = {isa = PBXBuildFile; fileRef = 5CA10FFB131C2A7600DE1F91 /* __init__.py */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		5C96F567131C35AB00A2E4AC /* BeautifulSoup.py in CopyFiles */ = {isa = PBXBuildFile; fileRef = 5CA10FFC131C2A7600DE1F91 /* BeautifulSoup.py */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		5C96F568131C35AB00A2E4AC /* BeautifulSoup.pyc in CopyFiles */ = {isa = PBXBuildFile; fileRef = 5CA10FFD131C2A7600DE1F91 /* BeautifulSoup.pyc */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
@@ -172,25 +176,15 @@
 		5CCEEF1D130B599B00E15B77 /* DFView.m in Sources */ = {isa = PBXBuildFile; fileRef = 5CCEEF1C130B599B00E15B77 /* DFView.m */; };
 		5CD1B00714F4593900AC948E /* Add.tiff in Resources */ = {isa = PBXBuildFile; fileRef = 219196BC09D4F20000586B15 /* Add.tiff */; };
 		5CE5B0081422795300FB554C /* PTKeyComboPanel.xib in Resources */ = {isa = PBXBuildFile; fileRef = 5CE5B00A1422795300FB554C /* PTKeyComboPanel.xib */; };
-		5CF01B08132975910083D66E /* greyscrollervertbottom.tiff in Resources */ = {isa = PBXBuildFile; fileRef = 5CF01B02132975910083D66E /* greyscrollervertbottom.tiff */; };
-		5CF01B0C132975910083D66E /* greyscrollerverttop.tiff in Resources */ = {isa = PBXBuildFile; fileRef = 5CF01B06132975910083D66E /* greyscrollerverttop.tiff */; };
-		5CF01B22132975DB0083D66E /* BTransparentScrollerSlotBottom.tif in Resources */ = {isa = PBXBuildFile; fileRef = 5CF01B16132975DA0083D66E /* BTransparentScrollerSlotBottom.tif */; };
 		5CF33C721308B478002B5499 /* NotesTableHeaderCell.m in Sources */ = {isa = PBXBuildFile; fileRef = 5CF33C711308B478002B5499 /* NotesTableHeaderCell.m */; };
 		5CF96CBD132EA1890079B3FD /* PassphrasePicker.nib in Resources */ = {isa = PBXBuildFile; fileRef = 214495740ADCC06300E2A2B6 /* PassphrasePicker.nib */; };
 		5CF96DA8132EA29D0079B3FD /* MainMenu.xib in Resources */ = {isa = PBXBuildFile; fileRef = 5CF96BFD132EA0300079B3FD /* MainMenu.xib */; };
 		5CF96DA9132EA29D0079B3FD /* dsa_pub.pem in Resources */ = {isa = PBXBuildFile; fileRef = 5C49E553131C72FD00696B68 /* dsa_pub.pem */; };
 		5CF96DAA132EA29D0079B3FD /* Acknowledgments.txt in Resources */ = {isa = PBXBuildFile; fileRef = 21813561105AF27400A0AE18 /* Acknowledgments.txt */; };
-		5CF96DBC132EA29D0079B3FD /* greyscrollervertfill3.tif in Resources */ = {isa = PBXBuildFile; fileRef = 5C94376D132A0C9D00B08B80 /* greyscrollervertfill3.tif */; };
-		5CF96DBF132EA29D0079B3FD /* BTransparentScrollerSlotTop.tif in Resources */ = {isa = PBXBuildFile; fileRef = 5CF01B1A132975DA0083D66E /* BTransparentScrollerSlotTop.tif */; };
-		5CF96DC0132EA29D0079B3FD /* scrollbarblue.tif in Resources */ = {isa = PBXBuildFile; fileRef = 5CF01B0E132975A40083D66E /* scrollbarblue.tif */; };
-		5CF96DC2132EA29D0079B3FD /* greyscrollervertfill.tiff in Resources */ = {isa = PBXBuildFile; fileRef = 5CF01B04132975910083D66E /* greyscrollervertfill.tiff */; };
 		5CF96DC5132EA29D0079B3FD /* TransparentButtonFillP.tiff in Resources */ = {isa = PBXBuildFile; fileRef = 5C96F704131C49D400A2E4AC /* TransparentButtonFillP.tiff */; };
 		5CF96DC7132EA29D0079B3FD /* TransparentButtonLeftP.tiff in Resources */ = {isa = PBXBuildFile; fileRef = 5C96F706131C49D400A2E4AC /* TransparentButtonLeftP.tiff */; };
 		5CF96DC9132EA29D0079B3FD /* TransparentButtonRightP.tiff in Resources */ = {isa = PBXBuildFile; fileRef = 5C96F708131C49D400A2E4AC /* TransparentButtonRightP.tiff */; };
 		5CF96DCB132EA29D0079B3FD /* TabClose_Front_Rollover.tif in Resources */ = {isa = PBXBuildFile; fileRef = 5C96F4FD131C2F9500A2E4AC /* TabClose_Front_Rollover.tif */; };
-		5CF96DCD132EA29D0079B3FD /* TransparentScrollerKnobBottom.tif in Resources */ = {isa = PBXBuildFile; fileRef = 5C4B35351307220E00014119 /* TransparentScrollerKnobBottom.tif */; };
-		5CF96DCF132EA29D0079B3FD /* TransparentScrollerKnobVerticalFill.tif in Resources */ = {isa = PBXBuildFile; fileRef = 5C4B35371307220E00014119 /* TransparentScrollerKnobVerticalFill.tif */; };
-		5CF96DD1132EA29D0079B3FD /* TransparentScrollerSlotTop.tif in Resources */ = {isa = PBXBuildFile; fileRef = 5C4B35391307220E00014119 /* TransparentScrollerSlotTop.tif */; };
 		5CF96DD6132EA29D0079B3FD /* IBeamInverted.png in Resources */ = {isa = PBXBuildFile; fileRef = 21DB407D12D5383F0057F52B /* IBeamInverted.png */; };
 		5CF96DD7132EA29D0079B3FD /* ListDividerDrag.png in Resources */ = {isa = PBXBuildFile; fileRef = 216DA1AC12D15F310004B9CE /* ListDividerDrag.png */; };
 		5CF96DD9132EA29D0079B3FD /* TBDownArrow.png in Resources */ = {isa = PBXBuildFile; fileRef = 212C6E99110E46F0004DD82C /* TBDownArrow.png */; };
@@ -244,6 +238,9 @@
 		93B90E86138601C100BEC5FB /* ODBEditor.m in Sources */ = {isa = PBXBuildFile; fileRef = 93B90E82138601C100BEC5FB /* ODBEditor.m */; };
 		93B90E921386072E00BEC5FB /* TemporaryFileCachePreparer.m in Sources */ = {isa = PBXBuildFile; fileRef = 93B90E911386072E00BEC5FB /* TemporaryFileCachePreparer.m */; };
 		A1B2C3D42F00000100A1B2C3 /* NVApexMarkdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42F00000200A1B2C3 /* NVApexMarkdown.swift */; };
+		B7E1BB052F0B000100000005 /* HTML2Text in Frameworks */ = {isa = PBXBuildFile; productRef = B7E1BB032F0B000100000003 /* HTML2Text */; };
+		B7E1BB062F0B000100000006 /* Readability in Frameworks */ = {isa = PBXBuildFile; productRef = B7E1BB042F0B000100000004 /* Readability */; };
+		B7E1BB082F0B000100000008 /* NVMarkdownifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E1BB072F0B000100000007 /* NVMarkdownifier.swift */; };
 		A1B2C3D42F20000100A1B2C3 /* HTMLToMarkdownConverter.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42F20000200A1B2C3 /* HTMLToMarkdownConverter.m */; settings = {COMPILER_FLAGS = "-fobjc-arc"; }; };
 		A1B2C3D42F20000400A1B2C3 /* NVRTFConverter.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42F20000500A1B2C3 /* NVRTFConverter.m */; settings = {COMPILER_FLAGS = "-fobjc-arc"; }; };
 		A1B2C3D42F20000700A1B2C3 /* AppController_Markdown.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42F20000800A1B2C3 /* AppController_Markdown.m */; };
@@ -269,6 +266,8 @@
 		B69E26F616F0B523001C6E4B /* Pencil@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = B69E26EE16F0B523001C6E4B /* Pencil@2x.png */; };
 		B69E26F716F0B523001C6E4B /* Search@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = B69E26EF16F0B523001C6E4B /* Search@2x.png */; };
 		D3EECA00106F66C70023D7F8 /* NVPasswordGenerator.m in Sources */ = {isa = PBXBuildFile; fileRef = D3EEC9FE106F66C70023D7F8 /* NVPasswordGenerator.m */; };
+		C0FFEE001F31000000000005 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE001F31000000000001 /* SafariWebExtensionHandler.swift */; };
+		C0FFEE001F31000000000006 /* nvALT Safari Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C0FFEE001F31000000000002 /* nvALT Safari Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -298,6 +297,17 @@
 				5C96F56D131C35AB00A2E4AC /* url_helpers.py in CopyFiles */,
 				5C96F56E131C35AB00A2E4AC /* url_helpers.pyc in CopyFiles */,
 			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C0FFEE001F3100000000000D /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				C0FFEE001F31000000000006 /* nvALT Safari Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -330,6 +340,21 @@
 		212089D70B0C2CA500A15A69 /* StickiesDocument.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = StickiesDocument.m; sourceTree = "<group>"; };
 		212B84600978422300F3597F /* NSString_NV.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NSString_NV.h; sourceTree = "<group>"; };
 		212B84610978422300F3597F /* NSString_NV.m */ = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.objc; path = NSString_NV.m; sourceTree = "<group>"; };
+		B7E1AA011F0A000100000001 /* TagSearch.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TagSearch.h; sourceTree = "<group>"; };
+		B7E1AA021F0A000100000002 /* TagSearch.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TagSearch.m; sourceTree = "<group>"; };
+		D5A1BB011F0C000100000001 /* NVAutoPair.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NVAutoPair.h; sourceTree = "<group>"; };
+		D5A1BB021F0C000100000002 /* NVAutoPair.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = NVAutoPair.m; sourceTree = "<group>"; };
+		F7A1C0DE1F0E000100000001 /* NVLog.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NVLog.h; sourceTree = "<group>"; };
+		F7A1C0DE1F0E000100000002 /* NVLog.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = NVLog.m; sourceTree = "<group>"; };
+		F8B2D1EF1F0F000100000001 /* PreviewTruncation.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PreviewTruncation.h; sourceTree = "<group>"; };
+		F8B2D1EF1F0F000100000002 /* PreviewTruncation.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PreviewTruncation.m; sourceTree = "<group>"; };
+		E6B2CC011F0D000100000001 /* LinkReferenceCompletion.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = LinkReferenceCompletion.h; sourceTree = "<group>"; };
+		E6B2CC021F0D000100000002 /* LinkReferenceCompletion.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = LinkReferenceCompletion.m; sourceTree = "<group>"; };
+		C4E1AA011F0B000100000001 /* PreviewRender.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PreviewRender.h; sourceTree = "<group>"; };
+		C4E1AA021F0B000100000002 /* PreviewRender.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PreviewRender.m; sourceTree = "<group>"; };
+		A8C3EE011F11000100000001 /* NoteLayout.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NoteLayout.h; sourceTree = "<group>"; };
+		A8C3EE021F11000100000001 /* NoteLayout.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = NoteLayout.m; sourceTree = "<group>"; };
+		C4E1AA041F0B000100000004 /* preview-js */ = {isa = PBXFileReference; lastKnownFileType = folder; path = preview-js; sourceTree = "<group>"; };
 		212C6950110E1940004DD82C /* TitlebarButton.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TitlebarButton.h; sourceTree = "<group>"; };
 		212C6951110E1940004DD82C /* TitlebarButton.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TitlebarButton.m; sourceTree = "<group>"; };
 		212C6A22110E371B004DD82C /* TBAlertWhite.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = TBAlertWhite.png; path = Images/TBAlertWhite.png; sourceTree = "<group>"; };
@@ -421,6 +446,12 @@
 		2191982109D607C600586B15 /* PrefsWindowController.m */ = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.objc; path = PrefsWindowController.m; sourceTree = "<group>"; };
 		219588D00961D7F200972B8C /* LinkingEditor.h */ = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.h; path = LinkingEditor.h; sourceTree = "<group>"; };
 		219588D10961D7F200972B8C /* LinkingEditor.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = LinkingEditor.m; sourceTree = "<group>"; };
+		A7E100012F0A000100000001 /* NVTheme.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NVTheme.h; sourceTree = "<group>"; };
+		A7E100022F0A000100000001 /* NVTheme.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = NVTheme.m; sourceTree = "<group>"; };
+		A7E100042F0A000100000001 /* NVThemeManager.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NVThemeManager.h; sourceTree = "<group>"; };
+		A7E100052F0A000100000001 /* NVThemeManager.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = NVThemeManager.m; sourceTree = "<group>"; };
+		A7E100072F0A000100000001 /* Paper.theme */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = Paper.theme; sourceTree = "<group>"; };
+		A7E100092F0A000100000001 /* Paper.css */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.css; path = Paper.css; sourceTree = "<group>"; };
 		219739F90AFE42A10046683E /* PassphraseRetriever.h */ = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.h; path = PassphraseRetriever.h; sourceTree = "<group>"; };
 		219739FA0AFE42A10046683E /* PassphraseRetriever.m */ = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.objc; path = PassphraseRetriever.m; sourceTree = "<group>"; };
 		21973FBC0B0060C80046683E /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = /System/Library/Frameworks/Security.framework; sourceTree = "<absolute>"; };
@@ -542,8 +573,6 @@
 		5C2CC189134989D7006FFE56 /* nvMenuDark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = nvMenuDark.png; path = Images/nvMenuDark.png; sourceTree = "<group>"; };
 		5C2CD035132ED47900CA0D7C /* ETScrollView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ETScrollView.h; sourceTree = "<group>"; };
 		5C2CD036132ED47900CA0D7C /* ETScrollView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = ETScrollView.m; sourceTree = "<group>"; };
-		5C38E2C214223D6900131682 /* ETOverlayScroller.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ETOverlayScroller.h; sourceTree = "<group>"; };
-		5C38E2C314223D6900131682 /* ETOverlayScroller.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = ETOverlayScroller.m; sourceTree = "<group>"; };
 		5C43665C1DA267130086FF84 /* en */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = en; path = en.lproj/MainMenu.xib; sourceTree = "<group>"; };
 		5C43665D1DA267290086FF84 /* en */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = en; path = en.lproj/MarkupPreview.xib; sourceTree = "<group>"; };
 		5C43665E1DA2672F0086FF84 /* en */ = {isa = PBXFileReference; lastKnownFileType = wrapper.nib; name = en; path = en.lproj/SaveHTMLPreview.nib; sourceTree = "<group>"; };
@@ -628,14 +657,6 @@
 		5C48A2A813A550B0006B73DD /* it */ = {isa = PBXFileReference; lastKnownFileType = wrapper.nib; name = it; path = it.lproj/URLGetter.nib; sourceTree = "<group>"; };
 		5C49E364131C5CC500696B68 /* Credits.html */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.html; path = Credits.html; sourceTree = "<group>"; };
 		5C49E553131C72FD00696B68 /* dsa_pub.pem */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = dsa_pub.pem; sourceTree = "<group>"; };
-		5C4B35351307220E00014119 /* TransparentScrollerKnobBottom.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = TransparentScrollerKnobBottom.tif; sourceTree = "<group>"; };
-		5C4B35361307220E00014119 /* TransparentScrollerKnobTop.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = TransparentScrollerKnobTop.tif; sourceTree = "<group>"; };
-		5C4B35371307220E00014119 /* TransparentScrollerKnobVerticalFill.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = TransparentScrollerKnobVerticalFill.tif; sourceTree = "<group>"; };
-		5C4B35381307220E00014119 /* TransparentScrollerSlotBottom.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = TransparentScrollerSlotBottom.tif; sourceTree = "<group>"; };
-		5C4B35391307220E00014119 /* TransparentScrollerSlotTop.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = TransparentScrollerSlotTop.tif; sourceTree = "<group>"; };
-		5C4B353A1307220E00014119 /* TransparentScrollerSlotVerticalFill.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = TransparentScrollerSlotVerticalFill.tif; sourceTree = "<group>"; };
-		5C4B35681307225000014119 /* ETTransparentScroller.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ETTransparentScroller.h; sourceTree = "<group>"; };
-		5C4B35691307225000014119 /* ETTransparentScroller.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = ETTransparentScroller.m; sourceTree = "<group>"; };
 		5C5713F01309A42600961090 /* SplitViewDimple2.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = SplitViewDimple2.tif; sourceTree = "<group>"; };
 		5C84319714229D940020E5A7 /* de */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = de; path = de.lproj/PassphraseRetriever.xib; sourceTree = "<group>"; };
 		5C84319814229D940020E5A7 /* it */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = it; path = it.lproj/PassphraseRetriever.xib; sourceTree = "<group>"; };
@@ -663,14 +684,9 @@
 		5C8BCFA31DA264290036FA7E /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		5C8BCFA41DA2642B0036FA7E /* zh */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = zh; path = zh.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		5C91A1851723079B006BF757 /* nvMenuW.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = nvMenuW.png; path = Images/nvMenuW.png; sourceTree = "<group>"; };
-		5C94376C132A0C9D00B08B80 /* greyscrollervertbottom3.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = greyscrollervertbottom3.tif; sourceTree = "<group>"; };
-		5C94376D132A0C9D00B08B80 /* greyscrollervertfill3.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = greyscrollervertfill3.tif; sourceTree = "<group>"; };
-		5C94376E132A0C9D00B08B80 /* greyscrollerverttop3.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = greyscrollerverttop3.tif; sourceTree = "<group>"; };
 		5C96F4FC131C2F9500A2E4AC /* TabClose_Front_Pressed.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = TabClose_Front_Pressed.tif; sourceTree = "<group>"; };
 		5C96F4FD131C2F9500A2E4AC /* TabClose_Front_Rollover.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = TabClose_Front_Rollover.tif; sourceTree = "<group>"; };
 		5C96F4FE131C2F9500A2E4AC /* TabClose_Front.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = TabClose_Front.tif; sourceTree = "<group>"; };
-		5C96F502131C2FA800A2E4AC /* BTTransparentScroller.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = BTTransparentScroller.m; sourceTree = "<group>"; };
-		5C96F503131C2FA800A2E4AC /* BTTransparentScroller.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = BTTransparentScroller.h; sourceTree = "<group>"; };
 		5C96F5A9131C37DF00A2E4AC /* NSString_MultiMarkdown.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NSString_MultiMarkdown.h; sourceTree = "<group>"; };
 		5C96F5AA131C37DF00A2E4AC /* NSString_MultiMarkdown.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = NSString_MultiMarkdown.m; sourceTree = "<group>"; };
 		5C96F5AB131C37DF00A2E4AC /* NSString_Markdown.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NSString_Markdown.h; sourceTree = "<group>"; };
@@ -744,12 +760,6 @@
 		5CE5B00E1422796900FB554C /* de */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = de; path = de.lproj/PTKeyComboPanel.xib; sourceTree = "<group>"; };
 		5CE5B0101422796900FB554C /* it */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = it; path = it.lproj/PTKeyComboPanel.xib; sourceTree = "<group>"; };
 		5CE6624913185202002039D0 /* NSTextFinder.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NSTextFinder.h; sourceTree = "<group>"; };
-		5CF01B02132975910083D66E /* greyscrollervertbottom.tiff */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = greyscrollervertbottom.tiff; sourceTree = "<group>"; };
-		5CF01B04132975910083D66E /* greyscrollervertfill.tiff */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = greyscrollervertfill.tiff; sourceTree = "<group>"; };
-		5CF01B06132975910083D66E /* greyscrollerverttop.tiff */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = greyscrollerverttop.tiff; sourceTree = "<group>"; };
-		5CF01B0E132975A40083D66E /* scrollbarblue.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = scrollbarblue.tif; sourceTree = "<group>"; };
-		5CF01B16132975DA0083D66E /* BTransparentScrollerSlotBottom.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = BTransparentScrollerSlotBottom.tif; sourceTree = "<group>"; };
-		5CF01B1A132975DA0083D66E /* BTransparentScrollerSlotTop.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = BTransparentScrollerSlotTop.tif; sourceTree = "<group>"; };
 		5CF33C701308B478002B5499 /* NotesTableHeaderCell.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NotesTableHeaderCell.h; sourceTree = "<group>"; };
 		5CF33C711308B478002B5499 /* NotesTableHeaderCell.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = NotesTableHeaderCell.m; sourceTree = "<group>"; };
 		5CF96BFF132EA03E0079B3FD /* de */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = de; path = de.lproj/MainMenu.xib; sourceTree = "<group>"; };
@@ -798,6 +808,7 @@
 		93B90E901386072E00BEC5FB /* TemporaryFileCachePreparer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TemporaryFileCachePreparer.h; sourceTree = "<group>"; };
 		93B90E911386072E00BEC5FB /* TemporaryFileCachePreparer.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TemporaryFileCachePreparer.m; sourceTree = "<group>"; };
 		A1B2C3D42F00000200A1B2C3 /* NVApexMarkdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVApexMarkdown.swift; sourceTree = "<group>"; };
+		B7E1BB072F0B000100000007 /* NVMarkdownifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVMarkdownifier.swift; sourceTree = "<group>"; };
 		A1B2C3D42F20000200A1B2C3 /* HTMLToMarkdownConverter.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = HTMLToMarkdownConverter.m; sourceTree = "<group>"; };
 		A1B2C3D42F20000300A1B2C3 /* HTMLToMarkdownConverter.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = HTMLToMarkdownConverter.h; sourceTree = "<group>"; };
 		A1B2C3D42F20000500A1B2C3 /* NVRTFConverter.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = NVRTFConverter.m; sourceTree = "<group>"; };
@@ -825,6 +836,11 @@
 		B69E26EF16F0B523001C6E4B /* Search@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = "Search@2x.png"; path = "Images/Search@2x.png"; sourceTree = "<group>"; };
 		D3EEC9FE106F66C70023D7F8 /* NVPasswordGenerator.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = NVPasswordGenerator.m; sourceTree = "<group>"; };
 		D3EEC9FF106F66C70023D7F8 /* NVPasswordGenerator.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NVPasswordGenerator.h; sourceTree = "<group>"; };
+		C0FFEE001F31000000000001 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		C0FFEE001F31000000000002 /* nvALT Safari Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "nvALT Safari Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		C0FFEE001F31000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		C0FFEE001F31000000000004 /* nvALTSafariExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "nvALTSafariExtension.entitlements"; sourceTree = "<group>"; };
+		C0FFEE001F31000000000013 /* Resources */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -842,8 +858,17 @@
 				219D254A1113FE34005E7DF5 /* SystemConfiguration.framework in Frameworks */,
 				21B54C021134F2E800E163A1 /* IOKit.framework in Frameworks */,
 				A1B2C3D42F00000500A1B2C3 /* Apex in Frameworks */,
+				B7E1BB052F0B000100000005 /* HTML2Text in Frameworks */,
+				B7E1BB062F0B000100000006 /* Readability in Frameworks */,
 				5C8BCF6A1DA25C810036FA7E /* Sparkle.framework in Frameworks */,
 				2191926709C52AA600586B15 /* libz.dylib in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C0FFEE001F31000000000009 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -908,8 +933,26 @@
 				21DB4BE512DE4E3D0057F52B /* NSString_CustomTruncation.m */,
 				212B84600978422300F3597F /* NSString_NV.h */,
 				212B84610978422300F3597F /* NSString_NV.m */,
+				B7E1AA011F0A000100000001 /* TagSearch.h */,
+				B7E1AA021F0A000100000002 /* TagSearch.m */,
+				D5A1BB011F0C000100000001 /* NVAutoPair.h */,
+				D5A1BB021F0C000100000002 /* NVAutoPair.m */,
+				F7A1C0DE1F0E000100000001 /* NVLog.h */,
+				F7A1C0DE1F0E000100000002 /* NVLog.m */,
+				F8B2D1EF1F0F000100000001 /* PreviewTruncation.h */,
+				F8B2D1EF1F0F000100000002 /* PreviewTruncation.m */,
+				E6B2CC011F0D000100000001 /* LinkReferenceCompletion.h */,
+				E6B2CC021F0D000100000002 /* LinkReferenceCompletion.m */,
+				C4E1AA011F0B000100000001 /* PreviewRender.h */,
+				C4E1AA021F0B000100000002 /* PreviewRender.m */,
+				A8C3EE011F11000100000001 /* NoteLayout.h */,
+				A8C3EE021F11000100000001 /* NoteLayout.m */,
 				D3EEC9FF106F66C70023D7F8 /* NVPasswordGenerator.h */,
 				D3EEC9FE106F66C70023D7F8 /* NVPasswordGenerator.m */,
+				A7E100012F0A000100000001 /* NVTheme.h */,
+				A7E100022F0A000100000001 /* NVTheme.m */,
+				A7E100042F0A000100000001 /* NVThemeManager.h */,
+				A7E100052F0A000100000001 /* NVThemeManager.m */,
 				2191982009D607C600586B15 /* PrefsWindowController.h */,
 				2191982109D607C600586B15 /* PrefsWindowController.m */,
 				5CA10F18131C297000DE1F91 /* PreviewController.h */,
@@ -969,6 +1012,7 @@
 			isa = PBXGroup;
 			children = (
 				8D1107320486CEB800E47090 /* nvALT.app */,
+				C0FFEE001F31000000000002 /* nvALT Safari Extension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -1119,15 +1163,6 @@
 				93B348271371547800658F98 /* HUDIconShare.png */,
 				5C2CC189134989D7006FFE56 /* nvMenuDark.png */,
 				93A158BD133C497400E1E7DA /* nvALT.icon */,
-				5C94376C132A0C9D00B08B80 /* greyscrollervertbottom3.tif */,
-				5C94376D132A0C9D00B08B80 /* greyscrollervertfill3.tif */,
-				5C94376E132A0C9D00B08B80 /* greyscrollerverttop3.tif */,
-				5CF01B16132975DA0083D66E /* BTransparentScrollerSlotBottom.tif */,
-				5CF01B1A132975DA0083D66E /* BTransparentScrollerSlotTop.tif */,
-				5CF01B0E132975A40083D66E /* scrollbarblue.tif */,
-				5CF01B02132975910083D66E /* greyscrollervertbottom.tiff */,
-				5CF01B04132975910083D66E /* greyscrollervertfill.tiff */,
-				5CF01B06132975910083D66E /* greyscrollerverttop.tiff */,
 				5C96F703131C49D400A2E4AC /* TransparentButtonFillN.tiff */,
 				5C96F704131C49D400A2E4AC /* TransparentButtonFillP.tiff */,
 				5C96F705131C49D400A2E4AC /* TransparentButtonLeftN.tiff */,
@@ -1137,12 +1172,6 @@
 				5C96F4FC131C2F9500A2E4AC /* TabClose_Front_Pressed.tif */,
 				5C96F4FD131C2F9500A2E4AC /* TabClose_Front_Rollover.tif */,
 				5C96F4FE131C2F9500A2E4AC /* TabClose_Front.tif */,
-				5C4B35351307220E00014119 /* TransparentScrollerKnobBottom.tif */,
-				5C4B35361307220E00014119 /* TransparentScrollerKnobTop.tif */,
-				5C4B35371307220E00014119 /* TransparentScrollerKnobVerticalFill.tif */,
-				5C4B35381307220E00014119 /* TransparentScrollerSlotBottom.tif */,
-				5C4B35391307220E00014119 /* TransparentScrollerSlotTop.tif */,
-				5C4B353A1307220E00014119 /* TransparentScrollerSlotVerticalFill.tif */,
 				21DB407D12D5383F0057F52B /* IBeamInverted.png */,
 				216DA1AC12D15F310004B9CE /* ListDividerDrag.png */,
 				219D1BB2110EA66A005E7DF5 /* TBAlert.png */,
@@ -1253,6 +1282,7 @@
 				29B97323FDCFA39411CA2CEA /* Frameworks */,
 				19C28FACFE9D520D11CA2CBB /* Products */,
 				57F27F7A11973A7F00C63ACF /* Notation.sdef */,
+				C0FFEE001F31000000000007 /* SafariExtension */,
 			);
 			name = Notation;
 			sourceTree = "<group>";
@@ -1286,8 +1316,11 @@
 			isa = PBXGroup;
 			children = (
 				934C3FAE14FDA069000D14BA /* custom.css */,
+				A7E100092F0A000100000001 /* Paper.css */,
+				A7E100072F0A000100000001 /* Paper.theme */,
 				934C3FAF14FDA069000D14BA /* customclean.css */,
 				934C3FB014FDA069000D14BA /* template.html */,
+				C4E1AA041F0B000100000004 /* preview-js */,
 				934C3FB114FDA069000D14BA /* templateclean.html */,
 				5C49E553131C72FD00696B68 /* dsa_pub.pem */,
 				21813561105AF27400A0AE18 /* Acknowledgments.txt */,
@@ -1351,6 +1384,7 @@
 				5C96F5A9131C37DF00A2E4AC /* NSString_MultiMarkdown.h */,
 				5C96F5AA131C37DF00A2E4AC /* NSString_MultiMarkdown.m */,
 				A1B2C3D42F00000200A1B2C3 /* NVApexMarkdown.swift */,
+				B7E1BB072F0B000100000007 /* NVMarkdownifier.swift */,
 				A1B2C3D42F20000300A1B2C3 /* HTMLToMarkdownConverter.h */,
 				A1B2C3D42F20000200A1B2C3 /* HTMLToMarkdownConverter.m */,
 				A1B2C3D42F20000600A1B2C3 /* NVRTFConverter.h */,
@@ -1369,12 +1403,6 @@
 			children = (
 				5C177AE5141EF95200BC0C0A /* ETClipView.h */,
 				5C177AE6141EF95200BC0C0A /* ETClipView.m */,
-				5C96F502131C2FA800A2E4AC /* BTTransparentScroller.m */,
-				5C96F503131C2FA800A2E4AC /* BTTransparentScroller.h */,
-				5C38E2C214223D6900131682 /* ETOverlayScroller.h */,
-				5C38E2C314223D6900131682 /* ETOverlayScroller.m */,
-				5C4B35681307225000014119 /* ETTransparentScroller.h */,
-				5C4B35691307225000014119 /* ETTransparentScroller.m */,
 				5C96F6E7131C48FE00A2E4AC /* ETTransparentButton.h */,
 				5C96F6E8131C48FE00A2E4AC /* ETTransparentButton.m */,
 				5CBD88F0132A84E000FC5A79 /* ETTransparentButtonCell.h */,
@@ -1428,6 +1456,17 @@
 			path = ODBEditor;
 			sourceTree = "<group>";
 		};
+		C0FFEE001F31000000000007 /* SafariExtension */ = {
+			isa = PBXGroup;
+			children = (
+				C0FFEE001F31000000000001 /* SafariWebExtensionHandler.swift */,
+				C0FFEE001F31000000000003 /* Info.plist */,
+				C0FFEE001F31000000000004 /* nvALTSafariExtension.entitlements */,
+				C0FFEE001F31000000000013 /* Resources */,
+			);
+			path = SafariExtension;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -1436,26 +1475,65 @@
 			buildConfigurationList = 212B842309780B5000F3597F /* Build configuration list for PBXNativeTarget "Notation" */;
 			buildPhases = (
 				8D1107290486CEB800E47090 /* Resources */,
-				5C96F565131C35A300A2E4AC /* CopyFiles */,
 				8D11072C0486CEB800E47090 /* Sources */,
 				8D11072E0486CEB800E47090 /* Frameworks */,
 				213FB6AD0B52E1B2004C74BD /* CopyFiles */,
 				A1B2C3D42F00000600A1B2C3 /* Re-sign Sparkle */,
+				C0FFEE001F3100000000000D /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				C0FFEE001F3100000000000F /* PBXTargetDependency */,
 			);
 			name = Notation;
 			packageProductDependencies = (
 				A1B2C3D42F00000400A1B2C3 /* Apex */,
+				B7E1BB032F0B000100000003 /* HTML2Text */,
+				B7E1BB042F0B000100000004 /* Readability */,
 			);
 			productInstallPath = "$(HOME)/Applications";
 			productName = Notation;
 			productReference = 8D1107320486CEB800E47090 /* nvALT.app */;
 			productType = "com.apple.product-type.application";
 		};
+		C0FFEE001F3100000000000B /* nvALT Safari Extension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C0FFEE001F31000000000012 /* Build configuration list for PBXNativeTarget "nvALT Safari Extension" */;
+			buildPhases = (
+				C0FFEE001F31000000000008 /* Sources */,
+				C0FFEE001F31000000000009 /* Frameworks */,
+				C0FFEE001F3100000000000A /* Resources */,
+				C0FFEE001F3100000000000C /* Copy Web Extension Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "nvALT Safari Extension";
+			productName = "nvALT Safari Extension";
+			productReference = C0FFEE001F31000000000002 /* nvALT Safari Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		C0FFEE001F3100000000000E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 29B97313FDCFA39411CA2CEA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C0FFEE001F3100000000000B;
+			remoteInfo = "nvALT Safari Extension";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		C0FFEE001F3100000000000F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C0FFEE001F3100000000000B /* nvALT Safari Extension */;
+			targetProxy = C0FFEE001F3100000000000E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		29B97313FDCFA39411CA2CEA /* Project object */ = {
@@ -1465,6 +1543,10 @@
 				ORGANIZATIONNAME = elasticthreads;
 				TargetAttributes = {
 					8D1107260486CEB800E47090 = {
+						DevelopmentTeam = 47TRS7H4BH;
+						ProvisioningStyle = Automatic;
+					};
+					C0FFEE001F3100000000000B = {
 						DevelopmentTeam = 47TRS7H4BH;
 						ProvisioningStyle = Automatic;
 					};
@@ -1491,11 +1573,14 @@
 			mainGroup = 29B97314FDCFA39411CA2CEA /* Notation */;
 			packageReferences = (
 				A1B2C3D42F00000300A1B2C3 /* XCLocalSwiftPackageReference "ThirdParty/apex" */,
+				B7E1BB012F0B000100000001 /* XCRemoteSwiftPackageReference "html2text-swift" */,
+				B7E1BB022F0B000100000002 /* XCRemoteSwiftPackageReference "read-swift" */,
 			);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				8D1107260486CEB800E47090 /* Notation */,
+				C0FFEE001F3100000000000B /* nvALT Safari Extension */,
 			);
 		};
 /* End PBXProject section */
@@ -1532,39 +1617,25 @@
 				216D9C2E12CFEF2A0004B9CE /* LinkBackPressed.tif in Resources */,
 				21A38EE412EA864400CEB5F0 /* MakeDefault_Pressed.tiff in Resources */,
 				5CBA7A911305E2DF004ADEBB /* TagEditingManager.xib in Resources */,
-				5C4B353E1307220E00014119 /* TransparentScrollerKnobTop.tif in Resources */,
-				5C4B35401307220E00014119 /* TransparentScrollerSlotBottom.tif in Resources */,
-				5C4B35421307220E00014119 /* TransparentScrollerSlotVerticalFill.tif in Resources */,
 				5C43669C1DA268500086FF84 /* How does this thing work?.nvhelp in Resources */,
 				5C96F4FF131C2F9500A2E4AC /* TabClose_Front_Pressed.tif in Resources */,
 				5C96F501131C2F9500A2E4AC /* TabClose_Front.tif in Resources */,
 				5C96F616131C380100A2E4AC /* Textile_2.12 in Resources */,
+				C4E1AA051F0B000100000005 /* preview-js in Resources */,
 				5C96F61C131C380C00A2E4AC /* Markdown_1.0.1 in Resources */,
 				5C96F709131C49D400A2E4AC /* TransparentButtonFillN.tiff in Resources */,
 				5C96F70B131C49D400A2E4AC /* TransparentButtonLeftN.tiff in Resources */,
 				5C96F70D131C49D400A2E4AC /* TransparentButtonRightN.tiff in Resources */,
 				5C49E365131C5CC500696B68 /* Credits.html in Resources */,
-				5CF01B08132975910083D66E /* greyscrollervertbottom.tiff in Resources */,
-				5CF01B0C132975910083D66E /* greyscrollerverttop.tiff in Resources */,
-				5CF01B22132975DB0083D66E /* BTransparentScrollerSlotBottom.tif in Resources */,
-				5C94376F132A0C9E00B08B80 /* greyscrollervertbottom3.tif in Resources */,
-				5C943771132A0C9E00B08B80 /* greyscrollerverttop3.tif in Resources */,
 				5CF96CBD132EA1890079B3FD /* PassphrasePicker.nib in Resources */,
 				5CF96DA8132EA29D0079B3FD /* MainMenu.xib in Resources */,
 				5CF96DA9132EA29D0079B3FD /* dsa_pub.pem in Resources */,
 				5CF96DAA132EA29D0079B3FD /* Acknowledgments.txt in Resources */,
-				5CF96DBC132EA29D0079B3FD /* greyscrollervertfill3.tif in Resources */,
-				5CF96DBF132EA29D0079B3FD /* BTransparentScrollerSlotTop.tif in Resources */,
-				5CF96DC0132EA29D0079B3FD /* scrollbarblue.tif in Resources */,
-				5CF96DC2132EA29D0079B3FD /* greyscrollervertfill.tiff in Resources */,
 				5CF96DC5132EA29D0079B3FD /* TransparentButtonFillP.tiff in Resources */,
 				5CF96DC7132EA29D0079B3FD /* TransparentButtonLeftP.tiff in Resources */,
 				5C43669B1DA268500086FF84 /* Excruciatingly Useful Shortcuts.nvhelp in Resources */,
 				5CF96DC9132EA29D0079B3FD /* TransparentButtonRightP.tiff in Resources */,
 				5CF96DCB132EA29D0079B3FD /* TabClose_Front_Rollover.tif in Resources */,
-				5CF96DCD132EA29D0079B3FD /* TransparentScrollerKnobBottom.tif in Resources */,
-				5CF96DCF132EA29D0079B3FD /* TransparentScrollerKnobVerticalFill.tif in Resources */,
-				5CF96DD1132EA29D0079B3FD /* TransparentScrollerSlotTop.tif in Resources */,
 				5CF96DD6132EA29D0079B3FD /* IBeamInverted.png in Resources */,
 				5CF96DD7132EA29D0079B3FD /* ListDividerDrag.png in Resources */,
 				5CF96DD9132EA29D0079B3FD /* TBDownArrow.png in Resources */,
@@ -1614,6 +1685,8 @@
 				5CE5B0081422795300FB554C /* PTKeyComboPanel.xib in Resources */,
 				5CD1B00714F4593900AC948E /* Add.tiff in Resources */,
 				934C3FB214FDA069000D14BA /* custom.css in Resources */,
+				A7E1000A2F0A000100000001 /* Paper.css in Resources */,
+				A7E100082F0A000100000001 /* Paper.theme in Resources */,
 				934C3FB314FDA06A000D14BA /* customclean.css in Resources */,
 				934C3FB414FDA06A000D14BA /* template.html in Resources */,
 				934C3FB514FDA06A000D14BA /* templateclean.html in Resources */,
@@ -1640,6 +1713,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C0FFEE001F3100000000000A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -1656,10 +1736,19 @@
 				5C4366A01DA283720086FF84 /* ETNoteScrollView.m in Sources */,
 				2114C2A80958D24800614E74 /* hmacsha1.c in Sources */,
 				219588D20961D7F200972B8C /* LinkingEditor.m in Sources */,
+				A7E100032F0A000100000001 /* NVTheme.m in Sources */,
+				A7E100062F0A000100000001 /* NVThemeManager.m in Sources */,
 				217D4282096545A000E84749 /* LabelObject.m in Sources */,
 				21A30EA70971D11D0071E9AF /* FastListDataSource.m in Sources */,
 				21A6E6FD0974204F008436A9 /* LabelsListController.m in Sources */,
 				212B84620978422300F3597F /* NSString_NV.m in Sources */,
+				B7E1AA031F0A000100000003 /* TagSearch.m in Sources */,
+				D5A1BB031F0C000100000003 /* NVAutoPair.m in Sources */,
+				F7A1C0DE1F0E000100000003 /* NVLog.m in Sources */,
+				F8B2D1EF1F0F000100000003 /* PreviewTruncation.m in Sources */,
+				E6B2CC031F0D000100000003 /* LinkReferenceCompletion.m in Sources */,
+				C4E1AA031F0B000100000003 /* PreviewRender.m in Sources */,
+				A8C3EE031F11000100000001 /* NoteLayout.m in Sources */,
 				21DC788F097894B600E59B09 /* NSCollection_utils.m in Sources */,
 				2155DEA6097B5F0300163A10 /* BufferUtils.c in Sources */,
 				2155DF44097C992800163A10 /* AttributedPlainText.m in Sources */,
@@ -1729,15 +1818,14 @@
 				21B64A2612E61FA700D87EFC /* LabelColumnCell.m in Sources */,
 				21B64C4E12E62A5700D87EFC /* UnifiedCell.m in Sources */,
 				5CBA7A981305E38C004ADEBB /* TagEditingManager.m in Sources */,
-				5C4B356A1307225000014119 /* ETTransparentScroller.m in Sources */,
 				5CF33C721308B478002B5499 /* NotesTableHeaderCell.m in Sources */,
 				5CCEEF1D130B599B00E15B77 /* DFView.m in Sources */,
 				5CA10F1A131C297000DE1F91 /* PreviewController.m in Sources */,
 				5CA10F32131C29E900DE1F91 /* AppController_Preview.m in Sources */,
 				5CA10F3B131C2A3F00DE1F91 /* MAAttachedWindow.m in Sources */,
-				5C96F504131C2FA800A2E4AC /* BTTransparentScroller.m in Sources */,
 				5C96F5AF131C37DF00A2E4AC /* NSString_MultiMarkdown.m in Sources */,
 				A1B2C3D42F00000100A1B2C3 /* NVApexMarkdown.swift in Sources */,
+				B7E1BB082F0B000100000008 /* NVMarkdownifier.swift in Sources */,
 				A1B2C3D42F20000100A1B2C3 /* HTMLToMarkdownConverter.m in Sources */,
 				A1B2C3D42F20000400A1B2C3 /* NVRTFConverter.m in Sources */,
 				A1B2C3D42F20000700A1B2C3 /* AppController_Markdown.m in Sources */,
@@ -1753,8 +1841,15 @@
 				93B90E86138601C100BEC5FB /* ODBEditor.m in Sources */,
 				93B90E921386072E00BEC5FB /* TemporaryFileCachePreparer.m in Sources */,
 				5C177AE7141EF95200BC0C0A /* ETClipView.m in Sources */,
-				5C38E2C414223D6900131682 /* ETOverlayScroller.m in Sources */,
 				934C3FB914FDA74F000D14BA /* NSFileManager+DirectoryLocations.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C0FFEE001F31000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C0FFEE001F31000000000005 /* SafariWebExtensionHandler.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1775,6 +1870,20 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "set -e\nFW=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/Sparkle.framework\"\nSIGN_ID=\"${EXPANDED_CODE_SIGN_IDENTITY}\"\nif [ -z \"$SIGN_ID\" ]; then\n  SIGN_ID=\"-\"\nfi\nsign()\n{\n  codesign --force --sign \"$SIGN_ID\" --options runtime --preserve-metadata=identifier,entitlements --timestamp=none \"$1\"\n}\nsign \"$FW/Versions/B/XPCServices/Downloader.xpc\"\nsign \"$FW/Versions/B/XPCServices/Installer.xpc\"\nsign \"$FW/Versions/B/Autoupdate\"\nsign \"$FW/Versions/B/Updater.app\"\nsign \"$FW\"\n";
+		};
+		C0FFEE001F3100000000000C /* Copy Web Extension Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Web Extension Resources";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\nSRC=\"$SRCROOT/SafariExtension/Resources\"\nDEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\nmkdir -p \"$DEST\"\nif [ -d \"$SRC\" ]; then\n  rsync -a --delete --exclude '.DS_Store' \"$SRC/\" \"$DEST/\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -2356,6 +2465,72 @@
 			};
 			name = ForBuilding;
 		};
+		C0FFEE001F31000000000010 /* Development */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = SafariExtension/nvALTSafariExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 144;
+				DEVELOPMENT_TEAM = 47TRS7H4BH;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SafariExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Send to nvALT";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 12.3;
+				MARKETING_VERSION = 3.0.15;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.elasticthreads.nv.safari-extension;
+				PRODUCT_MODULE_NAME = nvALTSafariExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				WRAPPER_EXTENSION = appex;
+			};
+			name = Development;
+		};
+		C0FFEE001F31000000000011 /* ForBuilding */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = SafariExtension/nvALTSafariExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 144;
+				DEVELOPMENT_TEAM = 47TRS7H4BH;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SafariExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Send to nvALT";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 12.3;
+				MARKETING_VERSION = 3.0.15;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.elasticthreads.nv.safari-extension;
+				PRODUCT_MODULE_NAME = nvALTSafariExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				WRAPPER_EXTENSION = appex;
+			};
+			name = ForBuilding;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -2377,6 +2552,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Development;
 		};
+		C0FFEE001F31000000000012 /* Build configuration list for PBXNativeTarget "nvALT Safari Extension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C0FFEE001F31000000000011 /* ForBuilding */,
+				C0FFEE001F31000000000010 /* Development */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Development;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
@@ -2386,11 +2570,40 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		B7E1BB012F0B000100000001 /* XCRemoteSwiftPackageReference "html2text-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ttscoff/html2text-swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.200.7;
+			};
+		};
+		B7E1BB022F0B000100000002 /* XCRemoteSwiftPackageReference "read-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ttscoff/read-swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		A1B2C3D42F00000400A1B2C3 /* Apex */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = A1B2C3D42F00000300A1B2C3 /* XCLocalSwiftPackageReference "ThirdParty/apex" */;
 			productName = Apex;
+		};
+		B7E1BB032F0B000100000003 /* HTML2Text */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B7E1BB012F0B000100000001 /* XCRemoteSwiftPackageReference "html2text-swift" */;
+			productName = HTML2Text;
+		};
+		B7E1BB042F0B000100000004 /* Readability */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B7E1BB022F0B000100000002 /* XCRemoteSwiftPackageReference "read-swift" */;
+			productName = Readability;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

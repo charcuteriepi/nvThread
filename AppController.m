@@ -23,6 +23,11 @@
 #import "NotationDirectoryManager.h"
 #import "NotationFileManager.h"
 #import "NSString_NV.h"
+#import "TagSearch.h"
+#import "SearchHighlight.h"
+#import "NoteShare.h"
+#import "SearchFieldLayout.h"
+#import "LinkReferenceCompletion.h"
 #import "NSString_CustomTruncation.h"
 #import "NSFileManager_NV.h"
 #import "EncodingsManager.h"
@@ -31,6 +36,9 @@
 #import "NSData_transformations.h"
 #import "BufferUtils.h"
 #import "LinkingEditor.h"
+#import "NoteLayout.h"
+#import "ListSplit.h"
+#import "MarkdownHighlight.h"
 #import "EmptyView.h"
 #import "DualField.h"
 #import "TitlebarButton.h"
@@ -38,6 +46,7 @@
 #import "BookmarksController.h"
 #import "SyncSessionController.h"
 #import "MultiplePageView.h"
+#import "NVThemeManager.h"
 #import "InvocationRecorder.h"
 #import "LinearDividerShader.h"
 #import "SecureTextEntryManager.h"
@@ -47,7 +56,7 @@
 #import "ETContentView.h"
 #import "PreviewController.h"
 #import "ETClipView.h"
-//#import "ETScrollView.h"
+#import "ETScrollView.h"
 #import "NSFileManager+DirectoryLocations.h"
 #import "nvaDevConfig.h"
 #import <Sparkle/Sparkle.h>
@@ -72,6 +81,27 @@ NSInteger ModFlagger;
 NSInteger popped;
 BOOL splitViewAwoke;
 
+
+@interface AppController (NVDividerChrome)
+- (void)applyWindowChrome;
+- (void)refreshListEditorDivider;
+@end
+
+static BOOL nvApplyingWindowChrome;
+
+@implementation RBSplitView (NVSystemAppearance)
+
+- (void)viewDidChangeEffectiveAppearance {
+	[super viewDidChangeEffectiveAppearance];
+	if ([[self delegate] respondsToSelector:@selector(refreshListEditorDivider)])
+		[[self delegate] performSelector:@selector(refreshListEditorDivider)];
+}
+
+@end
+
+@interface AppController ()
+- (void)applyImportURLMenuShortcut;
+@end
 
 @implementation AppController
 
@@ -105,7 +135,7 @@ BOOL splitViewAwoke;
                 ProcessSerialNumber psn = { 0, kCurrentProcess };
                 OSStatus returnCode = TransformProcessType(&psn, kProcessTransformToUIElementApplication);
                 if( returnCode != 0) {
-                    NSLog(@"Could not bring the application to front. Error %d", returnCode);
+                    NVLogWarning(@"Could not bring the application to front. Error %d", returnCode);
                 }                
             }
             if (![[NSUserDefaults standardUserDefaults] boolForKey:@"StatusBarItem"]) {
@@ -143,6 +173,7 @@ BOOL splitViewAwoke;
         [nc addObserver:self selector:@selector(toggleStatusItem:) name:@"AppShouldToggleStatusItem" object:nil];
         
         [nc addObserver:self selector:@selector(resetModTimers:) name:@"ModTimersShouldReset" object:nil];
+        [nc addObserver:self selector:@selector(themesDidChange:) name:NVThemesDidChangeNotification object:nil];
         [nc addObserver:self selector:@selector(releaseTagEditor:) name:@"TagEditorShouldRelease" object:nil];
         // Setup URL Handling
         NSAppleEventManager *appleEventManager = [NSAppleEventManager sharedAppleEventManager];
@@ -192,6 +223,8 @@ BOOL splitViewAwoke;
                   andMaxDimension:600.0];
     [notesSubview setCanCollapse:YES];
     [notesSubview setAutoresizesSubviews:YES];
+    if ([notesSubview respondsToSelector:@selector(setClipsToBounds:)])
+        [notesSubview setClipsToBounds:YES];
     [notesSubview addSubview:notesScrollView];
     splitSubview = [[splitView subviewAtPosition:1] retain];
     [notesScrollView setFrame:[notesSubview frame]];
@@ -199,6 +232,8 @@ BOOL splitViewAwoke;
     [splitSubview setMinDimension:1 andMaxDimension:0];
     [splitSubview setCanCollapse:NO];
     [splitSubview setAutoresizesSubviews:YES];
+    if ([splitSubview respondsToSelector:@selector(setClipsToBounds:)])
+        [splitSubview setClipsToBounds:YES];
     [splitSubview addSubview:textScrollView];
     
     id docView = [[textScrollView documentView] retain];
@@ -264,8 +299,11 @@ BOOL splitViewAwoke;
 	if (!awakenedViews) {
 		//NSLog(@"all (hopefully relevant) views awakend!");
 		[self _configureDividerForCurrentLayout];
-		[splitView restoreState:YES];
-		if ([notesSubview dimension]<200.0) {
+		BOOL restoredSplit = [splitView restoreState:YES];
+		/* A saved height under 200 is still a real list. Replacing it made a
+		   100 or 150 point list come back as the default, about 125 points
+		   in a shorter window, while 225 was left alone. */
+		if (NVShouldApplyDefaultListDimension(restoredSplit, [notesSubview dimension])) {
 			if ([splitView isVertical]) {   ///vertical means "Horiz layout"/notes list is to the left of the note body
 				if (([splitView frame].size.width < 600.0) && ([splitView frame].size.width - 400 > [notesSubview dimension])) {
 					[notesSubview setDimension:[splitView frame].size.width-400.0];
@@ -341,6 +379,7 @@ void outletObjectAwoke(id sender) {
     [self updateNoteMenus];
     [textView setupFontMenu];
     [prefsController registerAppActivationKeystrokeWithTarget:self selector:@selector(toggleNVActivation:)];
+    [self applyImportURLMenuShortcut];
     [notationController updateLabelConnectionsAfterDecoding];
     [notationController checkIfNotationIsTrashed];
     [[SecureTextEntryManager sharedInstance] checkForIncompatibleApps];
@@ -359,9 +398,9 @@ void outletObjectAwoke(id sender) {
     [siSparkle setAction:@selector(checkForUpdates:)];
     NSError *startError = nil;
     if (![controller.updater startUpdater:&startError])
-        NSLog(@"Sparkle failed to start: %@", startError);
+        NVLogError(@"Sparkle failed to start: %@", startError);
     else
-        NSLog(@"Sparkle started");
+        NVLogInfo(@"Sparkle started");
     // add elasticthreads' menuitems
     if(IsLeopardOrLater){
         [fsMenuItem setEnabled:YES];
@@ -476,7 +515,7 @@ void outletObjectAwoke(id sender) {
 	
 	[self setNotationController:newNotation];
 	
-	NSLog(@"load time: %g, ",[[NSDate date] timeIntervalSinceDate:before]);
+	NVLogInfo(@"load time: %g, ",[[NSDate date] timeIntervalSinceDate:before]);
 	//	NSLog(@"version: %s", PRODUCT_NAME);
 	
 	//import old database(s) here if necessary
@@ -490,6 +529,7 @@ void outletObjectAwoke(id sender) {
 	
 	if (URLToInterpretOnLaunch) {
 		[self interpretNVURL:[NSURL URLWithString:URLToInterpretOnLaunch]];
+		[URLToInterpretOnLaunch release];
 		URLToInterpretOnLaunch = nil;
 	}
 	
@@ -507,7 +547,7 @@ void outletObjectAwoke(id sender) {
 	 @selector(setTableColumnsShowPreview:sender:),  //when to tell notationcontroller to generate or disable note-body previews
 	 @selector(setConfirmNoteDeletion:sender:),  //whether "delete note" should have an ellipsis
      @selector(setUseFinderTags:),  //whether nvalt should use findertags
-	 @selector(setAutoCompleteSearches:sender:),@selector(setUseETScrollbarsOnLion:sender:), nil];   //when to tell notationcontroller to build its title-prefix connections
+	 @selector(setAutoCompleteSearches:sender:), nil];   //when to tell notationcontroller to build its title-prefix connections
 	
 	[self performSelector:@selector(runDelayedUIActionsAfterLaunch) withObject:nil afterDelay:0.0];
 	[self performSelector:@selector(offerMarkdownConversionIfNeeded) withObject:nil afterDelay:0.6];
@@ -520,6 +560,12 @@ terminateApp:
 	[NSApp terminate:self];
 }
 
+- (void)themesDidChange:(NSNotification *)note {
+	[self updateColorScheme];
+	if (previewController)
+		[previewController themesDidChange:note];
+}
+
 - (void)handleGetURLEvent:(NSAppleEventDescriptor *)event withReplyEvent:(NSAppleEventDescriptor *)replyEvent {
 	
 	NSURL *fullURL = [NSURL URLWithString:[[event paramDescriptorForKeyword:keyDirectObject] stringValue]];
@@ -528,12 +574,18 @@ terminateApp:
 		[previewController handleShareAuthURL:fullURL];
 		return;
 	}
+	NSString *themeCommand = [[fullURL host] lowercaseString];
+	if ([themeCommand isEqualToString:@"add-theme"] || [themeCommand isEqualToString:@"import-theme"]) {
+		[[NVThemeManager sharedManager] importThemeFromAppURL:fullURL];
+		return;
+	}
 	
 	if (notationController) {
 		if (![self interpretNVURL:fullURL])
 			NSBeep();
 	} else {
-		URLToInterpretOnLaunch = [[fullURL path]retain];
+		[URLToInterpretOnLaunch release];
+		URLToInterpretOnLaunch = [[fullURL absoluteString] retain];
 	}
 }
 
@@ -777,6 +829,7 @@ terminateApp:
     if (horiz) {
         [splitSubview setMinDimension:100.0 andMaxDimension:0.0];
     }
+    [notesScrollView setHidden:[notesSubview isCollapsed]];
 }
 
 - (IBAction)switchViewLayout:(id)sender {
@@ -804,9 +857,8 @@ terminateApp:
 	[notesTableView makeFirstPreviouslyVisibleRowVisibleIfNecessary];
 	
 	[self updateNoteMenus];
-    
-	[notesTableView setBackgroundColor:backgrndColor];
-	[notesTableView setNeedsDisplay];
+	[self applyNotesListChrome];
+	[self alignSearchFieldWithEditor];
 }
 
 - (void)createFromSelection:(NSPasteboard *)pboard userData:(NSString *)userData error:(NSString **)error {
@@ -955,7 +1007,7 @@ terminateApp:
     NSURL *streamURL = [NSURL URLWithString:@"x-marked://stream/"];
     if (![[NSWorkspace sharedWorkspace] openURL:streamURL]) {
         NSBeep();
-        NSLog(@"Could not open Marked streaming preview");
+        NVLogWarning(@"Could not open Marked streaming preview");
     }
 }
 
@@ -963,7 +1015,7 @@ terminateApp:
     if (![[[NSWorkspace sharedWorkspace]URLForApplicationWithBundleIdentifier:@"com.brettterpstra.marked2"] isFileURL] && ![[[NSWorkspace sharedWorkspace]URLForApplicationWithBundleIdentifier:@"com.brettterpstra.marky"] isFileURL] && ![[[NSWorkspace sharedWorkspace]URLForApplicationWithBundleIdentifier:@"com.brettterpstra.marked-setapp"] isFileURL] && ![[[NSWorkspace sharedWorkspace]URLForApplicationWithBundleIdentifier:@"com.brettterpstra.marked2.beta"] isFileURL])
     {
         NSBeep();
-        NSLog(@"Marked not found");
+        NVLogWarning(@"Marked not found");
     } else {
         NSIndexSet *indexes = [notesTableView selectedRowIndexes];
         //force-write any queued changes to disk in case notes are being stored as separate files which might be opened directly by the method below
@@ -999,7 +1051,8 @@ terminateApp:
         NSPoint cPoint=NSMakePoint(NSMidX(linkingFrame), NSMaxY(linkingFrame));
         
         //Multiple Notes selected, use ElasticThreads' multitagging implementation
-        tagEditor = [[[TagEditingManager alloc] initWithDelegate:self commonTags:[self commonLabelsForNotesAtIndexes:selIndexes] atPoint:cPoint] retain];
+        NSArray *notes = [notationController notesAtIndexes:selIndexes];
+        tagEditor = [[TagEditingManager alloc] initWithDelegate:self notes:notes labelsSource:[notationController labelsListDataSource] atPoint:cPoint];
         
 		//Multiple Notes selected, use ElasticThreads' multitagging implementation
 	} else if ([selIndexes count] == 1) {
@@ -1009,13 +1062,110 @@ terminateApp:
 }
 
 - (void)noteImporter:(AlienNoteImporter*)importer importedNotes:(NSArray*)notes {
-	
+	NoteObject *importedNote = nil;
+	if ([importer focusesImportedNote] && [notes count] == 1)
+		importedNote = [notes lastObject];
+
 	[notationController addNotes:notes];
+
+	if (importedNote) {
+		[self focusSearchOnImportedNote:importedNote];
+		[self revealNote:importedNote options:NVOrderFrontWindow];
+		[field setSnapbackString:nil];
+	}
+}
+
+- (void)focusSearchOnImportedNote:(NoteObject *)note {
+	NSString *title = titleOfNote(note);
+	if (![title length])
+		return;
+
+	[typedString release];
+	typedString = [title copy];
+	typedStringIsCached = YES;
+	isFilteringFromTyping = NO;
+
+	NSText *editor = [field currentEditor];
+	if ([editor isKindOfClass:[NSText class]])
+		[editor setString:title];
+	[field setStringValue:title];
+	[[field cell] setShowsClearButton:YES];
+	[field setSnapbackString:nil];
+	[notationController filterNotesFromString:title];
 }
 - (IBAction)importNotes:(id)sender {
 	AlienNoteImporter *importer = [[AlienNoteImporter alloc] init];
 	[importer importNotesFromDialogAroundWindow:window receptionDelegate:self];
 	[importer autorelease];
+}
+
+static NSURL *NVHTTPURLFromImportString(NSString *entered) {
+	if (![entered length])
+		return nil;
+	NSString *candidate = entered;
+	if ([candidate rangeOfString:@"://"].location == NSNotFound)
+		candidate = [@"https://" stringByAppendingString:candidate];
+	NSURL *url = [NSURL URLWithString:candidate];
+	NSString *scheme = [[url scheme] lowercaseString];
+	if (![url host] || !([scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"] || [scheme isEqualToString:@"ftp"]))
+		return nil;
+	return url;
+}
+
+- (void)applyImportURLMenuShortcut {
+	NSMenu *mainMenu = [NSApp mainMenu];
+	for (NSInteger i = 0; i < [mainMenu numberOfItems]; i++) {
+		NSMenu *submenu = [[mainMenu itemAtIndex:i] submenu];
+		for (NSInteger j = 0; j < [submenu numberOfItems]; j++) {
+			NSMenuItem *item = [submenu itemAtIndex:j];
+			if ([item action] == @selector(importURL:)) {
+				[item setKeyEquivalent:@"U"];
+				[item setKeyEquivalentModifierMask:NSEventModifierFlagCommand];
+			}
+		}
+	}
+}
+
+- (IBAction)importURL:(id)sender {
+	(void)sender;
+	NSAlert *alert = [[NSAlert alloc] init];
+	[alert setMessageText:NSLocalizedString(@"Import URL", @"title of import URL dialog")];
+	[alert setInformativeText:NSLocalizedString(@"Enter the address of a web page to import as a note.", @"message of import URL dialog")];
+	[alert addButtonWithTitle:NSLocalizedString(@"Import", @"title of button in import dialog")];
+	[alert addButtonWithTitle:NSLocalizedString(@"Cancel", nil)];
+
+	NSTextField *field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 360, 24)];
+	[field setPlaceholderString:@"https://example.com"];
+	NSString *clip = [[[NSPasteboard generalPasteboard] stringForType:NSStringPboardType] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+	if ([clip rangeOfCharacterFromSet:[NSCharacterSet newlineCharacterSet]].location == NSNotFound && [clip superficiallyResemblesAnHTTPURL])
+		[field setStringValue:clip];
+	[alert setAccessoryView:field];
+	[alert layout];
+	[[alert window] makeFirstResponder:field];
+
+	NSModalResponse response = [alert runModal];
+	NSString *entered = [[field stringValue] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+	[field release];
+	[alert release];
+
+	if (response != NSAlertFirstButtonReturn || ![entered length])
+		return;
+
+	NSURL *url = NVHTTPURLFromImportString(entered);
+	if (!url) {
+		NSAlert *badURLAlert = [[NSAlert alloc] init];
+		[badURLAlert setMessageText:NSLocalizedString(@"That address could not be imported.", @"title when an import URL is invalid")];
+		[badURLAlert setInformativeText:entered];
+		[badURLAlert addButtonWithTitle:NSLocalizedString(@"OK", nil)];
+		[badURLAlert runModal];
+		[badURLAlert release];
+		return;
+	}
+
+	AlienNoteImporter *importer = [[[AlienNoteImporter alloc] init] autorelease];
+	if (([[NSApp currentEvent] modifierFlags] & NSAlternateKeyMask) != 0)
+		[importer setShouldUseReadability:YES];
+	[importer importURLInBackground:url linkTitle:nil receptionDelegate:self];
 }
 
 - (void)settingChangedForSelectorString:(NSString*)selectorString {
@@ -1127,12 +1277,70 @@ terminateApp:
 	return ![[tableColumn identifier] isEqualToString:NoteTitleColumnString];
 }
 
+- (void)showKeyboardShortcuts {
+	NSString *path = [[NSBundle mainBundle] pathForResource:@"Excruciatingly Useful Shortcuts" ofType:@"nvhelp"];
+	NSData *data = [NSData dataWithContentsOfFile:path];
+	NSMutableAttributedString *text = data ? [[[NSMutableAttributedString alloc] initWithRTF:data documentAttributes:NULL] autorelease] : nil;
+	if (![text length]) {
+		NSBeep();
+		return;
+	}
+	NSRange fullRange = NSMakeRange(0, [text length]);
+	[text removeAttribute:NSBackgroundColorAttributeName range:fullRange];
+	[text addAttribute:NSForegroundColorAttributeName value:[NSColor labelColor] range:fullRange];
+	[text addAttribute:NSFontAttributeName value:[NSFont systemFontOfSize:13.0] range:fullRange];
+
+	if (!shortcutsHelpWindow) {
+		shortcutsHelpWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 560, 640)
+														   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
+															 backing:NSBackingStoreBuffered
+															   defer:NO];
+		[shortcutsHelpWindow setTitle:NSLocalizedString(@"Keyboard Shortcuts", nil)];
+		[shortcutsHelpWindow setDelegate:self];
+		[shortcutsHelpWindow setReleasedWhenClosed:NO];
+		[shortcutsHelpWindow setMinSize:NSMakeSize(420, 320)];
+		[shortcutsHelpWindow setContentMinSize:NSMakeSize(420, 320)];
+		[shortcutsHelpWindow center];
+
+		NSScrollView *scrollView = [[[NSScrollView alloc] initWithFrame:[[shortcutsHelpWindow contentView] bounds]] autorelease];
+		[scrollView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+		[scrollView setHasVerticalScroller:YES];
+		[scrollView setHasHorizontalScroller:NO];
+		[scrollView setBorderType:NSNoBorder];
+		[scrollView setDrawsBackground:NO];
+
+		NSTextView *helpView = [[[NSTextView alloc] initWithFrame:[scrollView bounds]] autorelease];
+		[helpView setEditable:NO];
+		[helpView setSelectable:YES];
+		[helpView setRichText:YES];
+		[helpView setImportsGraphics:NO];
+		[helpView setDrawsBackground:YES];
+		[helpView setBackgroundColor:[NSColor textBackgroundColor]];
+		[helpView setTextContainerInset:NSMakeSize(18, 16)];
+		[helpView setAutoresizingMask:NSViewWidthSizable];
+		[helpView setHorizontallyResizable:NO];
+		[helpView setVerticallyResizable:YES];
+		[helpView setUsesFindPanel:YES];
+		[[helpView textContainer] setWidthTracksTextView:YES];
+		[[helpView textContainer] setContainerSize:NSMakeSize(0, FLT_MAX)];
+		[scrollView setDocumentView:helpView];
+		[shortcutsHelpWindow setContentView:scrollView];
+	}
+
+	NSTextView *helpView = (NSTextView *)[(NSScrollView *)[shortcutsHelpWindow contentView] documentView];
+	[[helpView textStorage] setAttributedString:text];
+	[helpView setBackgroundColor:[NSColor textBackgroundColor]];
+	[helpView scrollRangeToVisible:NSMakeRange(0, 0)];
+	[shortcutsHelpWindow makeKeyAndOrderFront:self];
+}
+
 - (IBAction)showHelpDocument:(id)sender {
 	NSString *path = nil;
 	
 	switch ([sender tag]) {
 		case 1:		//shortcuts
-			path = [[NSBundle mainBundle] pathForResource:NSLocalizedString(@"Excruciatingly Useful Shortcuts", nil) ofType:@"nvhelp" inDirectory:nil];
+			[self showKeyboardShortcuts];
+			return;
 		case 2:		//acknowledgments
 			if (!path) path = [[NSBundle mainBundle] pathForResource:@"Acknowledgments" ofType:@"txt" inDirectory:nil];
 			[[NSWorkspace sharedWorkspace] openURLs:[NSArray arrayWithObject:[NSURL fileURLWithPath:path]] withAppBundleIdentifier:@"com.apple.TextEdit"
@@ -1225,7 +1433,13 @@ terminateApp:
             return;
         }
 		[field setStringValue:@""];
+		NSText *searchEditor = [field currentEditor];
+		if ([searchEditor isKindOfClass:[NSText class]])
+			[searchEditor setString:@""];
 		typedStringIsCached = NO;
+		[typedString release];
+		typedString = nil;
+		[self refreshVisibleSearchHighlights];
 		
 		[notesTableView deselectAll:sender];//thiss
 		[notationController filterNotesFromString:@""];
@@ -1361,7 +1575,7 @@ terminateApp:
 		}
 	} else{
         
-		NSLog(@"%@/%@ got %@", [control description], [aTextView description], NSStringFromSelector(command));
+		NVLogInfo(@"%@/%@ got %@", [control description], [aTextView description], NSStringFromSelector(command));
         self.isEditing=NO;
     }
 	
@@ -1376,6 +1590,9 @@ terminateApp:
 	NSRange currentRange = [textView selectedRangeWasAutomatic:&wasAutomatic];
 	if (!wasAutomatic) [currentNote setSelectedRange:currentRange];
 	
+	//and the top line, unless the user was only looking around the matches of a search
+	[self rememberScrollPositionOfCurrentNote];
+	
 	//regenerate content cache before switching to new note
 	[currentNote updateContentCacheCStringIfNecessary];
 	
@@ -1386,6 +1603,25 @@ terminateApp:
 
 - (NoteObject*)selectedNoteObject {
 	return currentNote;
+}
+
+- (void)rememberScrollPositionOfCurrentNote {
+	//the line at the top of the view becomes the note's remembered position when the user moved it there;
+	//while a search is on, the note has to be claimed first (see -noteBodyWasClaimed:)
+	BOOL scrollWasAutomatic = NO;
+	NSUInteger topCharIndex = [textView firstVisibleCharIndexWasAutomatic:&scrollWasAutomatic];
+	if (!scrollGuarded && !scrollWasAutomatic)
+		[currentNote setFirstVisibleCharIndex:topCharIndex];
+}
+
+- (void)noteBodyWasClaimed:(LinkingEditor*)editor {
+	//a click or an edit in the body makes the current view the note's remembered position,
+	//and from here on the user's own scrolling keeps updating it
+	if (editor != textView || !currentNote)
+		return;
+	scrollGuarded = NO;
+	[currentNote setFirstVisibleCharIndex:NVFirstVisibleCharIndex(textView)];
+	[textView markScrollPositionAutomatic];
 }
 
 - (NSString*)fieldSearchString {
@@ -1402,6 +1638,49 @@ terminateApp:
 		return typedString;
 	
 	return nil;
+}
+
+- (NSString*)searchStringForHighlighting {
+	NSText *editor = [field currentEditor];
+	NSString *fieldString = editor ? [editor string] : [field stringValue];
+	NSRange selection = editor ? [editor selectedRange] : NSMakeRange(0, [fieldString length]);
+	BOOL bodyFocused = textView && [window firstResponder] == textView;
+	NSString *highlight = NVSearchHighlightQuery(bodyFocused, isFilteringFromTyping, typedStringIsCached,
+												 editor != nil, selection, typedString, fieldString,
+												 currentNote ? titleOfNote(currentNote) : nil);
+	if (![highlight length])
+		return nil;
+	return NVHighlightStringByRemovingTagWords(highlight);
+}
+
+- (void)refreshVisibleSearchHighlights {
+	if (!textView)
+		return;
+	NSString *query = [self searchStringForHighlighting];
+	if (![query length]) {
+		[textView discardSearchHighlights];
+		//with no search on, scrolling counts again from wherever the view is now
+		if (currentNote) {
+			[textView markScrollPositionAutomatic];
+			scrollGuarded = NO;
+		}
+		return;
+	}
+	if (![prefsController highlightSearchTerms]) {
+		[textView discardSearchHighlights];
+		return;
+	}
+	[textView removeSearchTermHighlights];
+	NSArray *ranges = [textView highlightTermsTemporarily:query avoidHighlight:NO];
+	if (!currentNote)
+		return;
+	//the search changed under the selected note: show the match nearest to the view, and treat the
+	//scrolling that follows as looking around until the user clicks or types in the note
+	if ([ranges count] && [notationController indexInFilteredListForNoteIdenticalTo:currentNote] != [notationController preferredSelectedNoteIndex]) {
+		NVScrollToShowNearestRange(textView, ranges);
+		[textView markScrollPositionAutomatic];
+		scrollGuarded = YES;
+	}
 }
 
 - (void)cacheTypedStringIfNecessary:(NSString*)aString {
@@ -1476,40 +1755,8 @@ terminateApp:
 		}
 		
 		isFilteringFromTyping = NO;
-        
-	} else if ([tagEditor isMultitagging]) { //<--for elasticthreads multitagging
-        if (!isAutocompleting&&!wasDeleting) {
-            isAutocompleting = YES;
-            NSTextView *editor = [tagEditor tagFieldEditor];
-            NSRange selRange = [editor selectedRange];
-            NSString *tagString = [NSString stringWithString:tagEditor.tagFieldString];
-            NSString *searchString = tagString;
-            if (selRange.length>0) {
-                searchString = [searchString substringWithRange:selRange];
-            }
-            searchString = [[searchString componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@", "]] lastObject];
-            selRange = [tagString rangeOfString:searchString options:NSBackwardsSearch];
-            NSArray *theTags = [notesTableView labelCompletionsForString:searchString index:0];
-            if ((theTags)&&([theTags count]>0)&&(![[theTags objectAtIndex:0] isEqualToString:@""])){
-                NSString *useStr;
-                for (useStr in theTags) {
-                    if ([tagString rangeOfString:useStr].location==NSNotFound) {
-                        break;
-                    }
-                }
-                if (useStr) {
-                    tagString = [tagString substringToIndex:selRange.location];
-                    tagString = [tagString stringByAppendingString:useStr];
-                    selRange = NSMakeRange(selRange.location + selRange.length, useStr.length - searchString.length );
-                    [tagEditor setTF:tagString];
-                    [editor setSelectedRange:selRange];
-                }
-            }
-            isAutocompleting = NO;
-            //            [tagString release];
-        }
-        wasDeleting = NO;
-    }
+		[self refreshVisibleSearchHighlights];
+	}
 }
 
 - (void)tableViewSelectionIsChanging:(NSNotification *)aNotification {
@@ -1523,13 +1770,18 @@ terminateApp:
 	NSEvent *event = [window currentEvent];
     
 	NSEventType type = [event type];
+	/* Down-arrow from the search field posts this before the new row exists.
+	   An empty selection here is the gap between rows. Treating it as "no
+	   note" clears the body, and turning multiple selection off to put it
+	   back can drop the row that was just shown. The did-change notification
+	   is the one that lands on a note. */
+	if (type != NSLeftMouseDragged && type != NSLeftMouseDown)
+		return;
+
 	//do not allow drag-selections unless a modifier is pressed
-	if (type == NSLeftMouseDragged || type == NSLeftMouseDown) {
-		NSUInteger flags = [event modifierFlags];
-		if ((flags & NSShiftKeyMask) || (flags & NSCommandKeyMask)) {
-			allowMultipleSelection = YES;
-		}
-	}
+	NSUInteger flags = [event modifierFlags];
+	if ((flags & NSShiftKeyMask) || (flags & NSCommandKeyMask))
+		allowMultipleSelection = YES;
 	
 	if (allowMultipleSelection != [notesTableView allowsMultipleSelection]) {
 		//we may need to hack some hidden NSTableView instance variables to improve mid-drag flags-changing
@@ -1595,19 +1847,22 @@ terminateApp:
 				if (!isFilteringFromTyping) {
                     //	if ([toolbar isVisible]) {
                     if ([self dualFieldIsVisible]) {
+						//the field keeps the text the user typed to find this note, so the search they were
+						//running stays in view; after an auto-completion that means the typed prefix, not
+						//the completed title. The note's title shows in the list.
+						NSString *typed = typedString ? typedString : @"";
 						if (fieldEditor) {
-							//the field editor has focus--select text, too
-							[fieldEditor setString:titleOfNote(currentNote)];
-							NSUInteger strLen = [titleOfNote(currentNote) length];
-							if (strLen != [fieldEditor selectedRange].length)
-								[fieldEditor setSelectedRange:NSMakeRange(0, strLen)];
-						} else {
-							//this could be faster
-							[field setStringValue:titleOfNote(currentNote)];
+							if (![[fieldEditor string] isEqualToString:typed]) {
+								[fieldEditor setString:typed];
+								[fieldEditor setSelectedRange:NSMakeRange([typed length], 0)];
+							}
+						} else if (![[field stringValue] isEqualToString:typed]) {
+							[field setStringValue:typed];
 						}
 					} else {
 						[window setTitle:titleOfNote(currentNote)];
 					}
+					[self refreshVisibleSearchHighlights];
 				}
 			}
 			return;
@@ -1633,6 +1888,8 @@ terminateApp:
 				[field setStringValue:typedString];
 			}
 			[textView setString:@""];
+			[textView redisplayAfterNoteChange];
+			[self refreshEditorShareButton];
 		}
 		//[self _expandToolbar];
         [self setDualFieldIsVisible:YES];
@@ -1695,60 +1952,79 @@ terminateApp:
 
 - (BOOL)displayContentsForNoteAtIndex:(NSUInteger)noteIndex {
 	NoteObject *note = [notationController noteObjectAtFilteredIndex:noteIndex];
-	if (note != currentNote) {
-		[self setEmptyViewState:NO];
-		[field setShowsDocumentIcon:YES];
-		
-		//actually load the new note
-		[self _setCurrentNote:note];
-		
-		NSRange firstFoundTermRange = NSMakeRange(NSNotFound,0);
-		NSRange noteSelectionRange = [currentNote lastSelectedRange];
-		
-		if (noteSelectionRange.location == NSNotFound ||
-			NSMaxRange(noteSelectionRange) > [[note contentString] length]) {
-			//revert to the top; selection is invalid
-			noteSelectionRange = NSMakeRange(0,0);
-		}
-		
-		//[textView beginInhibitingUpdates];
-		//scroll to the top first in the old note body if necessary, because the text will (or really ought to) have already been laid-out
-		//if ([textView visibleRect].origin.y > 0)
-		//	[textView scrollRangeToVisible:NSMakeRange(0,0)];
-		
-		if (![textView didRenderFully]) {
-			//NSLog(@"redisplay because last note was too long to finish before we switched");
-			[textView setNeedsDisplayInRect:[textView visibleRect] avoidAdditionalLayout:YES];
-		}
-		
-		//restore string
-		[[textView textStorage] setAttributedString:[note contentString]];
-		[self postTextUpdate];
-		[self updateWordCount:(![prefsController showWordCount])];
-		//[textView setAutomaticallySelectedRange:NSMakeRange(0,0)];
-		
-		//highlight terms--delay this, too
-		if ((unsigned)noteIndex != [notationController preferredSelectedNoteIndex])
-			firstFoundTermRange = [textView highlightTermsTemporarilyReturningFirstRange:typedString avoidHighlight:
-								   ![prefsController highlightSearchTerms]];
-		
-		//if there was nothing selected, select the first found range
-		if (!noteSelectionRange.length && firstFoundTermRange.location != NSNotFound)
-			noteSelectionRange = firstFoundTermRange;
-		
-		//select and scroll
-		[textView setAutomaticallySelectedRange:noteSelectionRange];
-		[textView scrollRangeToVisible:noteSelectionRange];
-		
-		//NSString *words = noteIndex != [notationController preferredSelectedNoteIndex] ? typedString : nil;
-		//[textView setFutureSelectionRange:noteSelectionRange highlightingWords:words];
-		
-        [self updateRTL];
-        
-		return YES;
+	if (note == currentNote) {
+		/* The body is already this note. A clip left in the previous note's
+		   tail stays blank until the note changes, so correct that here. */
+		NVRevealNoteTextIfScrolledPastIt(textView);
+		return NO;
+	}
+
+	[self setEmptyViewState:NO];
+	[field setShowsDocumentIcon:YES];
+	
+	//actually load the new note
+	[self _setCurrentNote:note];
+	
+	NSRange noteSelectionRange = [currentNote lastSelectedRange];
+	
+	if (noteSelectionRange.location == NSNotFound ||
+		NSMaxRange(noteSelectionRange) > [[note contentString] length]) {
+		//revert to the top; selection is invalid
+		noteSelectionRange = NSMakeRange(0,0);
 	}
 	
-	return NO;
+	//[textView beginInhibitingUpdates];
+	//scroll to the top first in the old note body if necessary, because the text will (or really ought to) have already been laid-out
+	//if ([textView visibleRect].origin.y > 0)
+	//	[textView scrollRangeToVisible:NSMakeRange(0,0)];
+	
+	if (![textView didRenderFully]) {
+		//NSLog(@"redisplay because last note was too long to finish before we switched");
+		[textView setNeedsDisplayInRect:[textView visibleRect] avoidAdditionalLayout:YES];
+	}
+	
+	//restore string
+	[[textView textStorage] setAttributedString:[note contentString]];
+	NVLayOutEntireNote(textView);
+	[self postTextUpdate];
+	[self updateWordCount:(![prefsController showWordCount])];
+	//[textView setAutomaticallySelectedRange:NSMakeRange(0,0)];
+	
+	// The search that found this note stays marked across notes.
+	// Focusing the note body clears it.
+	[textView removeSearchTermHighlights];
+	NSString *highlightString = [self searchStringForHighlighting];
+	NSArray *foundRanges = nil;
+	if (highlightString)
+		foundRanges = [textView highlightTermsTemporarily:highlightString avoidHighlight:![prefsController highlightSearchTerms]];
+	//matches in the body only count when the note was not reached by typing its title
+	if (![foundRanges count] || (unsigned)noteIndex == [notationController preferredSelectedNoteIndex])
+		foundRanges = nil;
+	
+	//scroll, then select: the note comes back to the line it was left at (or to its selection when it has
+	//none), then, while a search is on, moves the least distance that shows the nearest match. A bare caret
+	//goes on that match, the one on screen. The selection is set last and without moving the view, so the
+	//saved position is what stays on screen.
+	if (!NVScrollCharIndexToTop(textView, [note firstVisibleCharIndex]))
+		NVScrollRangeIntoView(textView, noteSelectionRange);
+	NSRange shownMatch = NVScrollToShowNearestRange(textView, foundRanges);
+	if (!noteSelectionRange.length && shownMatch.location != NSNotFound)
+		noteSelectionRange = shownMatch;
+	NVRevealNoteTextIfScrolledPastIt(textView);
+	[textView setAutomaticallySelectedRange:noteSelectionRange];
+	[textView markScrollPositionAutomatic];
+	//looking around the matches is not remembered until the user clicks or types in the note;
+	//a note reached by typing its title, or one with no match in its body, is not being looked around
+	scrollGuarded = foundRanges != nil;
+	[textView redisplayAfterNoteChange];
+	
+	//NSString *words = noteIndex != [notationController preferredSelectedNoteIndex] ? typedString : nil;
+	//[textView setFutureSelectionRange:noteSelectionRange highlightingWords:words];
+	
+        [self updateRTL];
+	[self refreshEditorShareButton];
+        
+	return YES;
 }
 
 //from linkingeditor
@@ -1759,6 +2035,7 @@ terminateApp:
 		[currentNote setContentString:[textView textStorage]];
 		[self postTextUpdate];
 		[self updateWordCount:(![prefsController showWordCount])];
+		[self refreshEditorShareButton];
         if (IsLionOrLater) {
             [[NSNotificationCenter defaultCenter] postNotificationName:@"TextFindContextShouldUpdate" object:self];
         }
@@ -1767,12 +2044,19 @@ terminateApp:
     
 }
 
+- (void)textViewDidChangeSelection:(NSNotification *)notification {
+	if ([notification object] != textView)
+		return;
+	[self refreshEditorShareButton];
+	[previewController scrollPreviewToEditIfSynced];
+}
+
 - (void)textDidBeginEditing:(NSNotification *)aNotification {
 	if ([aNotification object] == textView) {
-		[textView removeHighlightedTerms];
+		[textView discardSearchHighlights];
 	    [self createNoteIfNecessary];
 	}/*else if ([aNotification object] == notesTableView) {
-      NSLog(@"ntv tdbe2");
+      NVLogInfo(@"ntv tdbe2");
       }*/
 }
 
@@ -1783,7 +2067,7 @@ terminateApp:
             
         }else{
             
-            NSLog(@"not textview should begin with to:%@",[aTextObject description]);
+            NVLogInfo(@"not textview should begin with to:%@",[aTextObject description]);
         }
     }
     return YES;
@@ -1792,7 +2076,7 @@ terminateApp:
 
 /*
  - (void)controlTextDidBeginEditing:(NSNotification *)aNotification{
- NSLog(@"controltextdidbegin");
+ NVLogInfo(@"controltextdidbegin");
  }
 */
 - (void)textDidEndEditing:(NSNotification *)aNotification {
@@ -1819,7 +2103,17 @@ terminateApp:
 
 - (NSArray *)textView:(NSTextView *)aTextView completions:(NSArray *)words
   forPartialWordRange:(NSRange)charRange indexOfSelectedItem:(NSInteger *)anIndex {
-	NSArray *noteTitles = [notationController noteTitlesPrefixedByString:[[aTextView string] substringWithRange:charRange] indexOfSelectedItem:anIndex];
+	NSString *document = [aTextView string];
+	if (aTextView == textView && charRange.location != NSNotFound && NSMaxRange(charRange) <= [document length]) {
+		NVLinkCompletionContext context = NVLinkCompletionContextAtLocation(document, NSMaxRange(charRange));
+		if (context.kind != NVLinkCompletionNone && NSEqualRanges(context.range, charRange)) {
+			NSArray *identifiers = NVLinkCompletionCandidates(document, context.kind, [document substringWithRange:charRange]);
+			if (anIndex)
+				*anIndex = [identifiers count] ? 0 : NSNotFound;
+			return identifiers;
+		}
+	}
+	NSArray *noteTitles = [notationController noteTitlesPrefixedByString:[document substringWithRange:charRange] indexOfSelectedItem:anIndex];
 	return noteTitles;
 }
 
@@ -1835,7 +2129,7 @@ terminateApp:
 	
 	if ([sender firstResponder] == textView) {
 		if ((floor(NSAppKitVersionNumber) > NSAppKitVersionNumber10_3) && currentNote) {
-			NSLog(@"windowWillReturnUndoManager should not be called when textView is first responder on Tiger or higher");
+			NVLogWarning(@"windowWillReturnUndoManager should not be called when textView is first responder on Tiger or higher");
 		}
 		
 		NSUndoManager *undoMan = [self undoManagerForTextView:textView];
@@ -1890,6 +2184,9 @@ terminateApp:
 	NSUInteger idx = [self revealNote:[notationController noteForUUIDBytes:&bytes] options:NVDoNotChangeScrollPosition];
 	//scroll using saved scrollbar position
 	[notesTableView scrollRowToVisible:NSNotFound == idx ? 0 : idx withVerticalOffset:[prefsController scrollOffsetOfLastSelectedNote]];
+	//and put the note body back exactly where it was at quit; the note's own remembered position is not touched
+	if (idx != NSNotFound && currentNote && NVScrollCharIndexToTop(textView, [prefsController topCharIndexOfLastSelectedNote]))
+		[textView markScrollPositionAutomatic];
 }
 
 - (NSUInteger)revealNote:(NoteObject*)note options:(NSUInteger)opts {
@@ -1897,7 +2194,7 @@ terminateApp:
 		NSUInteger selectedNoteIndex = [notationController indexInFilteredListForNoteIdenticalTo:note];
 		
 		if (selectedNoteIndex == NSNotFound) {
-			NSLog(@"Note was not visible--showing all notes and trying again");
+			NVLogInfo(@"Note was not visible--showing all notes and trying again");
 			[self cancelOperation:nil];
 			
 			selectedNoteIndex = [notationController indexInFilteredListForNoteIdenticalTo:note];
@@ -1966,7 +2263,7 @@ terminateApp:
 			[fieldEditor replaceCharactersInRange:fullRange withString:string];
 			[fieldEditor didChangeText];
 		} else {
-			NSLog(@"I shouldn't change text?");
+			NVLogWarning(@"I shouldn't change text?");
 		}
 	}
 }
@@ -2029,7 +2326,7 @@ terminateApp:
 - (BOOL)notationListShouldChange:(NotationController*)someNotation {
 	
 	if (someNotation == notationController) {
-		if ([notesTableView currentEditor])
+		if ([notesTableView currentEditor] || [notesTableView nv_tagEditingRow] >= 0)
 			return NO;
 	}
 	
@@ -2080,7 +2377,9 @@ terminateApp:
     if (aNoteObject == currentNote) {
         //	if ([toolbar isVisible]) {
         if ([self dualFieldIsVisible]) {
-			[field setStringValue:titleOfNote(currentNote)];
+			//only replace a title that was auto-completed into the field, never the text the user typed
+			if (!typedStringIsCached || ![[field stringValue] isEqualToString:typedString])
+				[field setStringValue:titleOfNote(currentNote)];
 		} else {
 			[window setTitle:titleOfNote(currentNote)];
 		}
@@ -2092,6 +2391,9 @@ terminateApp:
 	if (aNoteObject == currentNote) {
 		NSArray *selRanges=[textView selectedRanges];
 		[[textView textStorage] setAttributedString:[aNoteObject contentString]];
+		NVLayOutEntireNote(textView);
+		NVRevealNoteTextIfScrolledPastIt(textView);
+		[textView redisplayAfterNoteChange];
         if (![selRanges isEqualToArray:[textView selectedRanges]]) {
             NSRange testEnd=[[selRanges lastObject] rangeValue];
             NSUInteger test=testEnd.location+testEnd.length;
@@ -2140,6 +2442,11 @@ terminateApp:
 }
 
 - (void)windowWillClose:(NSNotification *)aNotification {
+    if ([aNotification object] == shortcutsHelpWindow) {
+        [shortcutsHelpWindow autorelease];
+        shortcutsHelpWindow = nil;
+        return;
+    }
     
     //	[self resetModTimers];
     [[NSNotificationCenter defaultCenter] postNotificationName:@"ModTimersShouldReset" object:nil];
@@ -2191,10 +2498,13 @@ terminateApp:
 		NSRange currentRange = [textView selectedRangeWasAutomatic:&wasAutomatic];
 		if (!wasAutomatic) [currentNote setSelectedRange:currentRange];
 		
+		[self rememberScrollPositionOfCurrentNote];
+		
 		[currentNote updateContentCacheCStringIfNecessary];
 		
 		[prefsController setLastSearchString:[self fieldSearchString] selectedNote:currentNote
 					scrollOffsetForTableView:notesTableView sender:self];
+		[prefsController setTopCharIndexOfLastSelectedNote:currentNote ? NVFirstVisibleCharIndex(textView) : NSNotFound];
 		
 		[prefsController saveCurrentBookmarksFromSender:self];
 	}
@@ -2207,7 +2517,7 @@ terminateApp:
     if ([notationController flushAllNoteChanges])
 		[notationController closeJournal];
 	else
-		NSLog(@"Could not flush database, so not removing journal");
+		NVLogError(@"Could not flush database, so not removing journal");
 	
     [prefsController synchronize];
 }
@@ -2218,6 +2528,9 @@ terminateApp:
     [mainView release];
     [dualFieldView release];
     [wordCounter release];
+	[editorShareButton removeFromSuperview];
+	[editorShareButton release];
+	[editorSharePicker release];
     [splitView release];
     [splitSubview release];
     [notesSubview release];
@@ -2303,6 +2616,323 @@ terminateApp:
 
 #pragma mark SplitView Delegate methods
 
+static BOOL nvSearchFieldAligning = NO;
+static const CGFloat NVEditorShareButtonWidth = 28.0;
+static const CGFloat NVEditorShareButtonGap = 6.0;
+static const CGFloat NVEditorShareButtonEdge = 6.0;
+
+static void NVRemoveSuperviewConstraintsOnView(NSView *view) {
+	NSView *superview = [view superview];
+	if (!superview)
+		return;
+	NSArray *existing = [[superview constraints] copy];
+	NSUInteger i;
+	for (i = 0; i < [existing count]; i++) {
+		NSLayoutConstraint *constraint = [existing objectAtIndex:i];
+		if ([constraint firstItem] == view || [constraint secondItem] == view)
+			[superview removeConstraint:constraint];
+	}
+	[existing release];
+}
+
+/* A required width constraint captured when the window was created keeps that
+   width across later resizes. Point any such constraint at the width we want. */
+static void NVRetargetWidthConstraints(NSView *view, CGFloat desiredWidth) {
+	NSView *owner = view;
+	while (owner) {
+		NSArray *existing = [[owner constraints] copy];
+		NSUInteger i;
+		for (i = 0; i < [existing count]; i++) {
+			NSLayoutConstraint *constraint = [existing objectAtIndex:i];
+			if ([constraint firstItem] == view && [constraint secondItem] == nil &&
+				[constraint firstAttribute] == NSLayoutAttributeWidth &&
+				fabs([constraint constant] - desiredWidth) > 0.5)
+				[constraint setConstant:desiredWidth];
+		}
+		[existing release];
+		owner = [owner superview];
+	}
+}
+
+/* The titlebar and the views behind it can stay at the width from when the
+   window was created and clip the search field. Stretch the ones that start
+   at the left edge, outermost first so a child is not clipped by its parent. */
+static void NVStretchFullBleedAncestors(NSView *view, CGFloat targetWidth) {
+	NSMutableArray *chain = [NSMutableArray array];
+	NSView *ancestor = view;
+	while (ancestor) {
+		[chain addObject:ancestor];
+		ancestor = [ancestor superview];
+	}
+	NSInteger i;
+	for (i = (NSInteger)[chain count] - 1; i >= 0; i--) {
+		NSView *item = [chain objectAtIndex:(NSUInteger)i];
+		NSRect frame = [item frame];
+		CGFloat width = NVFullBleedWidth(NSMinX(frame), NSWidth(frame), targetWidth);
+		if (fabs(width - NSWidth(frame)) <= 0.5)
+			continue;
+		frame.size.width = width;
+		NVRetargetWidthConstraints(item, width);
+		[item setFrame:frame];
+		NVRetargetWidthConstraints(item, width);
+	}
+}
+
+- (void)refreshEditorShareButton {
+	if (!editorShareButton)
+		return;
+	NSString *body = textView ? [textView string] : @"";
+	NSRange selection = textView ? [textView selectedRange] : NSMakeRange(0, 0);
+	BOOL hasSelection = selection.length > 0 && selection.location != NSNotFound && NSMaxRange(selection) <= [body length];
+	[editorShareButton setEnabled:NVEditorShareText(body, selection) != nil];
+	[editorShareButton setToolTip:hasSelection ? @"Share Selection" : @"Share Note"];
+}
+
+- (NSButton *)makeEditorShareButton {
+	if (editorShareButton)
+		return editorShareButton;
+	editorShareButton = [[NSButton alloc] initWithFrame:NSMakeRect(0, 0, NVEditorShareButtonWidth, 22)];
+	[editorShareButton setBordered:NO];
+	[editorShareButton setButtonType:NSButtonTypeMomentaryPushIn];
+	[editorShareButton setImagePosition:NSImageOnly];
+	[editorShareButton setImage:[NSImage imageNamed:NSImageNameShareTemplate]];
+	[[editorShareButton cell] setImageScaling:NSImageScaleProportionallyDown];
+	[editorShareButton setTarget:self];
+	[editorShareButton setAction:@selector(shareEditorNote:)];
+	[editorShareButton setAutoresizingMask:NSViewNotSizable];
+	[self refreshEditorShareButton];
+	return editorShareButton;
+}
+
+- (void)placeEditorShareButtonInView:(NSView *)host frameInWindow:(NSRect)desired {
+	NSButton *button = [self makeEditorShareButton];
+	if ([button superview] != host) {
+		[button retain];
+		[button removeFromSuperview];
+		[host addSubview:button];
+		[button release];
+	}
+	NVRemoveSuperviewConstraintsOnView(button);
+	[button setTranslatesAutoresizingMaskIntoConstraints:YES];
+	NSRect frame = [host convertRect:desired fromView:nil];
+	frame.origin.x = round(frame.origin.x);
+	frame.origin.y = round(frame.origin.y);
+	frame.size.width = round(NSWidth(frame));
+	frame.size.height = round(NSHeight(frame));
+	NVRetargetWidthConstraints(button, NSWidth(frame));
+	[button setFrame:frame];
+	/* Stick to the right edge. A fixed origin is what left the button behind
+	   when the titlebar grew. */
+	[button setAutoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
+	NVRetargetWidthConstraints(button, NSWidth(frame));
+}
+
+- (IBAction)shareEditorNote:(id)sender {
+	NSString *item = NVEditorShareText(textView ? [textView string] : @"",
+									   textView ? [textView selectedRange] : NSMakeRange(0, 0));
+	if (![item length] || !editorShareButton)
+		return;
+	[editorSharePicker release];
+	editorSharePicker = [[NSSharingServicePicker alloc] initWithItems:[NSArray arrayWithObject:item]];
+	[editorSharePicker setDelegate:self];
+	[editorSharePicker showRelativeToRect:[editorShareButton bounds] ofView:editorShareButton preferredEdge:NSMinYEdge];
+}
+
+- (void)sharingServicePicker:(NSSharingServicePicker *)sharingServicePicker didChooseSharingService:(NSSharingService *)service {
+	if (sharingServicePicker == editorSharePicker) {
+		[editorSharePicker release];
+		editorSharePicker = nil;
+	}
+}
+
+- (void)alignSearchFieldWithEditor {
+	if (nvSearchFieldAligning || !field || !splitView || !notesSubview || !window)
+		return;
+	NSView *container = [field superview];
+	NSView *titlebar = [[window standardWindowButton:NSWindowCloseButton] superview];
+	if (!container || !titlebar || [container window] != window || [notesSubview window] != window)
+		return;
+	if (NSHeight([container bounds]) < 1.0)
+		return;
+	// Old fullscreen mode hosts the field in the content view, not the titlebar.
+	if (dualFieldView && [container superview] == dualFieldView) {
+		NSRect hostInWindow = [dualFieldView convertRect:[dualFieldView bounds] toView:nil];
+		NSRect containerInWindow = [container convertRect:[container bounds] toView:nil];
+		if (NSHeight(containerInWindow) < 1.0)
+			return;
+		nvSearchFieldAligning = YES;
+		CGFloat buttonLeft = NSMaxX(hostInWindow) - NVEditorShareButtonEdge - NVEditorShareButtonWidth;
+		NSRect fieldDesired = containerInWindow;
+		fieldDesired.size.width = buttonLeft - NVEditorShareButtonGap - NSMinX(fieldDesired);
+		if (NSWidth(fieldDesired) < 1.0)
+			fieldDesired.size.width = 1.0;
+		NSRect containerFrame = [dualFieldView convertRect:fieldDesired fromView:nil];
+		containerFrame.origin.x = round(containerFrame.origin.x);
+		containerFrame.origin.y = round(containerFrame.origin.y);
+		containerFrame.size.width = round(NSWidth(containerFrame));
+		containerFrame.size.height = round(NSHeight(containerFrame));
+		[container setFrame:containerFrame];
+		NSRect fieldFrame = [field frame];
+		fieldFrame.origin.x = 0.0;
+		fieldFrame.size.width = NSWidth([container bounds]);
+		[field setFrame:fieldFrame];
+		[self placeEditorShareButtonInView:dualFieldView frameInWindow:NSMakeRect(buttonLeft, NSMinY(containerInWindow), NVEditorShareButtonWidth, NSHeight(containerInWindow))];
+		nvSearchFieldAligning = NO;
+		return;
+	}
+
+	NSRect titlebarInWindow = [titlebar convertRect:[titlebar bounds] toView:nil];
+	CGFloat right = NSMaxX(titlebarInWindow);
+	CGFloat leftLimit = NSMinX(titlebarInWindow);
+	NSView *content = [window contentView];
+	CGFloat contentMaxX = right;
+	if (content) {
+		NSRect contentInWindow = [content convertRect:[content bounds] toView:nil];
+		contentMaxX = NSMaxX(contentInWindow);
+		leftLimit = MAX(leftLimit, NSMinX(contentInWindow));
+	}
+	/* The titlebar and the content view can both keep the width from when the
+	   window was created. The window frame is already the new width. */
+	NSRect frameOnScreen = [window frame];
+	NSRect contentOnScreen = [window contentRectForFrameRect:frameOnScreen];
+	NSRect windowContentInWindow = [window convertRectFromScreen:contentOnScreen];
+	CGFloat windowMaxX = NSMaxX(windowContentInWindow);
+	right = NVSearchFieldRightEdge(right, contentMaxX, windowMaxX);
+	if (windowMaxX >= 1.0)
+		NVStretchFullBleedAncestors(titlebar, windowMaxX);
+	right -= NVEditorShareButtonEdge;
+	CGFloat shareButtonRight = right;
+	right -= NVEditorShareButtonWidth + NVEditorShareButtonGap;
+	CGFloat left = leftLimit;
+	NSButton *zoomButton = [window standardWindowButton:NSWindowZoomButton];
+	if (zoomButton && [zoomButton superview]) {
+		NSRect zoomInWindow = [[zoomButton superview] convertRect:[zoomButton frame] toView:nil];
+		CGFloat minLeft = ceil(NSMaxX(zoomInWindow) + 8.0);
+		if (minLeft > left && minLeft < right)
+			left = minLeft;
+	}
+	/* Both layouts start just after the title. The notes column is not part of this
+	   measurement, so a tiled or narrow window cannot pull the field over the list.
+	   The measured string is narrower than the drawn title, so the extra gap keeps
+	   the field off the last letter. */
+	if ([[window title] length]) {
+		NSFont *titleFont = [NSFont titleBarFontOfSize:0.0];
+		NSSize titleSize = [[window title] sizeWithAttributes:[NSDictionary dictionaryWithObject:titleFont forKey:NSFontAttributeName]];
+		left += ceil(titleSize.width) + 36.0;
+	}
+	left = round(left);
+	/* Keep the right edge on the window even when the title leaves little room. */
+	if (right - left < 50.0)
+		left = MAX(leftLimit, right - 50.0);
+	if (right - left < 1.0)
+		return;
+
+	/* Match the traffic-light row so later titlebar layout leaves the field where it is. */
+	CGFloat fieldHeight = NSHeight([container bounds]);
+	CGFloat y = NSMinY(titlebarInWindow);
+	NSButton *closeButton = [window standardWindowButton:NSWindowCloseButton];
+	if (closeButton && [closeButton superview]) {
+		NSRect closeInWindow = [[closeButton superview] convertRect:[closeButton frame] toView:nil];
+		y = NSMidY(closeInWindow) - (fieldHeight / 2.0);
+	}
+	y = round(y);
+
+	NSRect shareDesired = NSMakeRect(shareButtonRight - NVEditorShareButtonWidth, y, NVEditorShareButtonWidth, fieldHeight);
+	NSRect containerInWindow = [container convertRect:[container bounds] toView:nil];
+	NSRect shareInWindow = editorShareButton ? [editorShareButton convertRect:[editorShareButton bounds] toView:nil] : NSZeroRect;
+	BOOL sharePinned = editorShareButton && [editorShareButton superview] == titlebar
+		&& fabs(NSMinX(shareInWindow) - NSMinX(shareDesired)) <= 0.5
+		&& fabs(NSMaxX(shareInWindow) - NSMaxX(shareDesired)) <= 0.5
+		&& fabs(NSMinY(shareInWindow) - y) <= 0.5;
+	BOOL alreadyPinned = [container superview] == titlebar
+		&& fabs(NSMinX(containerInWindow) - left) <= 0.5
+		&& fabs(NSMaxX(containerInWindow) - right) <= 0.5
+		&& fabs(NSMinY(containerInWindow) - y) <= 0.5
+		&& fabs(NSMinX([field frame])) <= 0.5
+		&& fabs(NSWidth([field frame]) - NSWidth([container bounds])) <= 0.5
+		&& sharePinned;
+	if (alreadyPinned)
+		return;
+
+	nvSearchFieldAligning = YES;
+	if ([window respondsToSelector:@selector(setTitleVisibility:)])
+		[window setTitleVisibility:NSWindowTitleVisible];
+	// The toolbar item slot cannot start left of the title. Host the field in the
+	// titlebar so it can start just after the title in either layout.
+	if ([container superview] != titlebar) {
+		[container retain];
+		if (dualFieldItem && [dualFieldItem view] == container) {
+			NSView *placeholder = [[[NSView alloc] initWithFrame:NSMakeRect(0, 0, 0, NSHeight(containerInWindow))] autorelease];
+			[dualFieldItem setMinSize:NSMakeSize(0, NSHeight(containerInWindow))];
+			[dualFieldItem setMaxSize:NSMakeSize(0, NSHeight(containerInWindow))];
+			[dualFieldItem setView:placeholder];
+		}
+		[container removeFromSuperview];
+		[titlebar addSubview:container];
+		[container release];
+	}
+	/* The titlebar's width constraint keeps the creation width. Retarget it,
+	   then let the field grow with the titlebar instead of pinning that width. */
+	NVRemoveSuperviewConstraintsOnView(container);
+	[container setTranslatesAutoresizingMaskIntoConstraints:YES];
+
+	NSRect desired = NSMakeRect(left, y, right - left, fieldHeight);
+	NSRect frame = [titlebar convertRect:desired fromView:nil];
+	frame.origin.x = round(frame.origin.x);
+	frame.origin.y = round(frame.origin.y);
+	frame.size.width = round(NSWidth(frame));
+	NVRetargetWidthConstraints(container, NSWidth(frame));
+	[container setFrame:frame];
+	[container setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+	NVRetargetWidthConstraints(container, NSWidth(frame));
+
+	NSRect fieldFrame = [field frame];
+	fieldFrame.origin.x = 0.0;
+	fieldFrame.size.width = NSWidth([container bounds]);
+	[field setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+	[field setFrame:fieldFrame];
+	[container setNeedsDisplay:YES];
+	NSTextView *editor = (NSTextView *)[field currentEditor];
+	NSCell *searchCell = [field cell];
+	/* Nib load can lay this out before DualField swaps in DualFieldCell. */
+	if ([editor isKindOfClass:[NSTextView class]] && [searchCell respondsToSelector:@selector(textAreaForBounds:)])
+		[editor setFrame:[(id)searchCell textAreaForBounds:[field bounds]]];
+	[self placeEditorShareButtonInView:titlebar frameInWindow:shareDesired];
+	nvSearchFieldAligning = NO;
+}
+
+- (void)alignSearchFieldWithEditorAfterLayout {
+	if (nvSearchFieldAligning)
+		return;
+	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(alignSearchFieldWithEditor) object:nil];
+	[self performSelector:@selector(alignSearchFieldWithEditor) withObject:nil afterDelay:0 inModes:[NSArray arrayWithObject:NSRunLoopCommonModes]];
+}
+
+- (void)windowDidLayout:(NSNotification *)notification {
+	[self alignSearchFieldWithEditor];
+	/* Titlebar layout can run after this and put the field back. Align once more after it. */
+	[self alignSearchFieldWithEditorAfterLayout];
+}
+
+- (void)windowDidResize:(NSNotification *)notification {
+	/* A tiled resize updates the content view before the titlebar view, and
+	   does not always send windowDidLayout. Align from the resize itself. */
+	[self alignSearchFieldWithEditor];
+	[self alignSearchFieldWithEditorAfterLayout];
+}
+
+- (void)windowDidEndLiveResize:(NSNotification *)notification {
+	[self alignSearchFieldWithEditor];
+	[self alignSearchFieldWithEditorAfterLayout];
+}
+
+- (void)didAdjustSubviews:(RBSplitView*)sender {
+	if (sender == splitView) {
+		[self alignSearchFieldWithEditor];
+		[self alignSearchFieldWithEditorAfterLayout];
+	}
+}
+
 - (void)splitView:(RBSplitView*)sender wasResizedFrom:(CGFloat)oldDimension to:(CGFloat)newDimension {
 	if (sender == splitView) {
 		[sender adjustSubviewsExcepting:notesSubview];
@@ -2354,10 +2984,44 @@ terminateApp:
 	return NO;
 }
 
+- (void)applyWindowChrome {
+	if (nvApplyingWindowChrome || !window)
+		return;
+	nvApplyingWindowChrome = YES;
+	NSColor *chrome = NVWindowChromeColor();
+	BOOL themedWindow = [[[NVThemeManager sharedManager] currentEditorTheme] windowBackgroundColor] != nil;
+	[window setTitlebarAppearsTransparent:YES];
+	[window setTitlebarSeparatorStyle:NSTitlebarSeparatorStyleNone];
+	[window setToolbarStyle:NSWindowToolbarStyleUnified];
+	[toolbar setShowsBaselineSeparator:NO];
+	[window setBackgroundColor:chrome];
+	if (mainView)
+		[mainView setBackgroundColor:chrome];
+	NSAppearance *appearance = nil;
+	if (themedWindow && chrome)
+		appearance = [NSAppearance appearanceNamed:(NVThemeColorIsLight(chrome) ? NSAppearanceNameAqua : NSAppearanceNameDarkAqua)];
+	if ([window appearance] != appearance && (!appearance || ![[window appearance] isEqual:appearance]))
+		[window setAppearance:appearance];
+	nvApplyingWindowChrome = NO;
+}
+
+- (void)refreshListEditorDivider {
+	[self applyWindowChrome];
+	if (notesScrollView && notesSubview)
+		[notesScrollView setFrame:[notesSubview bounds]];
+	if (textScrollView && splitSubview)
+		[textScrollView setFrame:[splitSubview bounds]];
+	if (splitView)
+		[splitView setNeedsDisplay:YES];
+}
+
 - (NSRect)splitView:(RBSplitView*)sender willDrawDividerInRect:(NSRect)dividerRect betweenView:(RBSplitSubview*)leading
 			andView:(RBSplitSubview*)trailing withProposedRect:(NSRect)imageRect {
-	[dividerShader drawDividerInRect:dividerRect withDimpleRect:imageRect blendVertically:![prefsController horizontalLayout]];
-	
+	NSColor *fill = NVWindowChromeColor();
+	if (fill) {
+		[fill setFill];
+		NSRectFillUsingOperation(dividerRect, NSCompositingOperationSourceOver);
+	}
 	return NSZeroRect;
 }
 
@@ -2389,6 +3053,8 @@ terminateApp:
 
 - (void)splitView:(RBSplitView*)sender didCollapse:(RBSplitSubview*)subview{
     if(!splitViewIsChangingLayout){
+        if (subview == notesSubview)
+            [notesScrollView setHidden:YES];
         [splitView setDividerThickness: kSplitViewCollapsedDividerThickness];
         [window makeFirstResponder:textView];
         [splitView adjustSubviews];
@@ -2408,6 +3074,8 @@ terminateApp:
 
 - (void)splitView:(RBSplitView*)sender didExpand:(RBSplitSubview*)subview{
     if(!splitViewIsChangingLayout){
+        if (subview == notesSubview)
+            [notesScrollView setHidden:NO];
         [splitView setDividerThickness:kSplitViewExpandedDividerThickness];
         [splitView adjustSubviews];
         [mainView setNeedsDisplay:YES];
@@ -2419,16 +3087,48 @@ terminateApp:
 
 - (void)tableView:(NSTableView *)aTableView willDisplayCell:(id)aCell forTableColumn:(NSTableColumn *)aTableColumn row:(NSInteger)rowIndex {
     if (aTableView==notesTableView) {
-        if ([aCell isHighlighted]) {
-            if (([window firstResponder]==notesTableView)||(isEditing&&([notesTableView editedRow]==rowIndex))) {//([notesTableView rowHeight]>30.0)||
+        NVEditorTheme *listTheme = [[NVThemeManager sharedManager] currentEditorTheme];
+        /* Stacked layout paints its own selection. Leaving the cell highlighted
+           makes it draw the system accent over that fill. */
+        BOOL rowIsSelected = [aCell isHighlighted] || [notesTableView isRowSelected:rowIndex];
+        if (rowIsSelected && [notesTableView selectionHighlightStyle] == NSTableViewSelectionHighlightStyleNone)
+            [aCell setHighlighted:NO];
+        BOOL rowIsFocused = ([window firstResponder]==notesTableView)||(isEditing&&([notesTableView editedRow]==rowIndex))||([notesTableView nv_tagEditingRow]==rowIndex);
+        NSColor *rowColor = foregrndColor;
+        if (listTheme) {
+            if (rowIsSelected)
+                rowColor = rowIsFocused ? [listTheme listSelectionForegroundColor] : [listTheme listInactiveSelectionForegroundColor];
+            else
+                rowColor = [listTheme listForegroundColor] ?: foregrndColor;
+        } else if (rowIsSelected) {
+            if (rowIsFocused) {//([notesTableView rowHeight]>30.0)||
                 [aCell setTextColor:[NSColor whiteColor]];
                 return;
-            }else if ([[foregrndColor colorUsingColorSpaceName:NSCalibratedWhiteColorSpace] whiteComponent]>0.5) {                    
+            } else if (![notesTableView usesLightRowBackground]) {
+                [aCell setTextColor:[NSColor whiteColor]];
+                return;
+            } else if ([[foregrndColor colorUsingColorSpaceName:NSCalibratedWhiteColorSpace] whiteComponent]>0.5) {
                 [aCell setTextColor:[NSColor colorWithCalibratedWhite:0.2 alpha:1.0]];
                 return;
             }
         }
-        [aCell setTextColor:foregrndColor];
+        if (!rowColor)
+            rowColor = foregrndColor;
+        [aCell setTextColor:rowColor];
+        NSAttributedString *shown = [aCell attributedStringValue];
+        if (listTheme && rowColor && [shown length]) {
+            NSMutableAttributedString *colored = [shown mutableCopy];
+            NSRange titleRange = [[colored string] rangeOfString:@"\n"];
+            if (rowIsSelected || titleRange.location == NSNotFound) {
+                [colored addAttribute:NSForegroundColorAttributeName value:rowColor range:NSMakeRange(0, [colored length])];
+            } else {
+                [colored addAttribute:NSForegroundColorAttributeName value:rowColor range:NSMakeRange(0, titleRange.location)];
+                NSColor *previewColor = [[listTheme listBackgroundColor] blendedColorWithFraction:0.45 ofColor:rowColor] ?: rowColor;
+                [colored addAttribute:NSForegroundColorAttributeName value:previewColor range:NSMakeRange(titleRange.location, [colored length] - titleRange.location)];
+            }
+            [aCell setAttributedStringValue:colored];
+            [colored release];
+        }
     }
 }
 
@@ -2482,79 +3182,13 @@ terminateApp:
 }
 
 - (IBAction)multiTag:(id)sender {
-	NSString *tagString = [tagEditor.tagFieldString stringByTrimmingCharactersInSet:[NSCharacterSet labelSeparatorCharacterSet]];
-	NSArray *newTags;
-    if (tagString&&(tagString.length>0)) {
-        newTags=[tagString labelCompatibleWords];
-    }else{
-        newTags=[NSArray array];
-    }
-    NSArray *commonLabs=tagEditor.commonTags;
-    if (![newTags isEqualToArray:commonLabs]) {
-        
-        NSArray *selNotes = [notationController notesAtIndexes:[notesTableView selectedRowIndexes]];
-        if (!selNotes||([selNotes count]==0)) {
-            return;
-        }
-        tagString=nil;
-        
-        BOOL gotNewLabels=(newTags&&([newTags count]>0));
-        BOOL gotCommonLabels=(commonLabs&&([commonLabs count]>0));
-        NSPredicate *pred;
-        if (gotCommonLabels&&gotNewLabels) {
-            pred=[NSPredicate predicateWithFormat:@"NOT %@ CONTAINS[cd] SELF",newTags];
-            commonLabs=[commonLabs filteredArrayUsingPredicate:pred];
-        }
-        NSMutableArray *finalTags = [NSMutableArray new];
-        for (NoteObject *aNote in selNotes) {
-            NSString *separator=@" ";
-            tagString=labelsOfNote(aNote);
-            NSArray *filteredTags;
-            
-            if (tagString&&(tagString.length>0)) {
-                if (([tagString rangeOfString:@","].location!=NSNotFound)) {
-                    separator=@",";
-                }
-                filteredTags=[tagString labelCompatibleWords];
-                if (gotCommonLabels) {
-                    pred=[NSPredicate predicateWithFormat:@"NOT %@ CONTAINS[cd] SELF",commonLabs];
-                    filteredTags=[filteredTags filteredArrayUsingPredicate:pred];
-                }
-                if (filteredTags&&([filteredTags count]>0)) {
-                    [finalTags addObjectsFromArray:filteredTags];
-                }
-            }
-            if (gotNewLabels) {
-                if (finalTags&&([finalTags count]>0)) {
-                    pred=[NSPredicate predicateWithFormat:@"NOT %@ CONTAINS[cd] SELF",finalTags];
-                    filteredTags=[newTags filteredArrayUsingPredicate:pred];
-                    if (filteredTags&&([filteredTags count]>0)) {
-                        [finalTags addObjectsFromArray:filteredTags];
-                    }
-                }else{
-                    [finalTags addObjectsFromArray:newTags];
-                }
-            }
-            if (finalTags&&([finalTags count]>0)) {
-                tagString = [finalTags componentsJoinedByString:separator];
-            }else{
-                tagString=@"";
-            }
-        
-            [aNote setLabelString:tagString];
-            [finalTags removeAllObjects];
-        }
-        
-		[notesTableView scrollRowToVisible:[[notesTableView selectedRowIndexes] firstIndex]];
-        [finalTags release];
-    }
-	[tagEditor closeTP:self];
+	[tagEditor commitTokens:sender];
 }
 
 - (void)releaseTagEditor:(NSNotification *)note{
-    if (tagEditor) {
-        [tagEditor release];
-    }
+    TagEditingManager *editor = tagEditor;
+    tagEditor = nil;
+    [editor release];
 }
 
 #pragma mark splitview/toolbar management
@@ -2639,6 +3273,8 @@ terminateApp:
     //        [[NSUserDefaults standardUserDefaults] setBool:!isVis forKey:@"ToolbarHidden"];
     if (isVis) {
         [window setTitle:@"nvALT"];
+        if ([window respondsToSelector:@selector(setTitleVisibility:)])
+            [window setTitleVisibility:NSWindowTitleVisible];
         if (currentNote&&(![[field stringValue]isEqualToString:titleOfNote(currentNote)]))
             [field setStringValue:titleOfNote(currentNote)];
         
@@ -2648,6 +3284,8 @@ terminateApp:
     }else{
         if (currentNote)
             [window setTitle:titleOfNote(currentNote)];
+        if ([window respondsToSelector:@selector(setTitleVisibility:)])
+            [window setTitleVisibility:NSWindowTitleVisible];
         
         
         [window setInitialFirstResponder:textView];
@@ -2902,16 +3540,37 @@ terminateApp:
         [self updateColorScheme];
     }
     
+- (void)applyNotesListChrome {
+    if ([notesTableView respondsToSelector:@selector(setStyle:)])
+        [notesTableView setStyle:[prefsController horizontalLayout] ? NSTableViewStyleAutomatic : NSTableViewStylePlain];
+    [notesTableView applySelectionHighlightStyle];
+    NVEditorTheme *listTheme = [[NVThemeManager sharedManager] currentEditorTheme];
+    NSColor *listBackground = listTheme ? [listTheme listBackgroundColor] : nil;
+    NSColor *listForeground = listTheme ? [listTheme listForegroundColor] : nil;
+    if (!listBackground)
+        listBackground = backgrndColor;
+    [notesTableView setBackgroundColor:listBackground];
+    NSScrollView *listScroll = [notesTableView enclosingScrollView];
+    if (listBackground && listScroll) {
+        [listScroll setBackgroundColor:listBackground];
+        [[listScroll contentView] setBackgroundColor:listBackground];
+    }
+    if (listForeground)
+        [NotesTableHeaderCell setTxtColor:listForeground];
+    else if (foregrndColor)
+        [NotesTableHeaderCell setTxtColor:foregrndColor];
+    [notesTableView setNeedsDisplay:YES];
+    [notesScrollView nv_updateScrollerChrome];
+}
+
 - (void)updateColorScheme{
     if (!IsLionOrLater) {        
         [window setBackgroundColor:backgrndColor];
         [dualFieldView setBackgroundColor:backgrndColor];
     }
     [mainView setBackgroundColor:backgrndColor];
-    [NotesTableHeaderCell setTxtColor:foregrndColor];
-    
     [notesTableView setGridColor:foregrndColor];
-    [notesTableView setBackgroundColor:backgrndColor];
+    [self applyNotesListChrome];
     [notationController setForegroundTextColor:foregrndColor];
     
     [textView setBackgroundColor:backgrndColor];
@@ -2921,8 +3580,25 @@ terminateApp:
         [self contentsUpdatedForNote:currentNote];
     }
     [dividerShader updateColorsWithBackgroundColor:backgrndColor andForegroundColor:foregrndColor];
-    [splitView setNeedsDisplay:YES];
+    [notesScrollView nv_updateScrollerChrome];
+    [textScrollView nv_updateScrollerChrome];
+    [self updateWordCounterChrome];
+    [self refreshListEditorDivider];
     
+}
+
+- (void)updateWordCounterChrome {
+    if (!wordCounter)
+        return;
+    NVEditorTheme *theme = [[NVThemeManager sharedManager] currentEditorTheme];
+    NSColor *preferred = [[theme styleForKey:@"searchField"] foregroundColor];
+    if (!preferred)
+        preferred = [theme windowForegroundColor] ?: [theme editorForegroundColor] ?: foregrndColor;
+    /* The counter is drawn on the search field, which fills white. A dark window
+       appearance would otherwise leave this token in the light control color. */
+    NSColor *color = NVReadableTextColor(preferred, [NSColor whiteColor]);
+    [wordCounter setAppearance:[NSAppearance appearanceNamed:NSAppearanceNameAqua]];
+    [wordCounter applyForegroundColor:color];
 }
 
 - (void)updateFieldAttributes{
@@ -2939,10 +3615,9 @@ terminateApp:
     
     if (self.isEditing) {
         [theFieldEditor setDrawsBackground:NO];
-        [theFieldEditor setTextColor:foregrndColor];
         [theFieldEditor setSelectedTextAttributes:fieldAttributes];
-        [theFieldEditor setInsertionPointColor:foregrndColor];
-        
+        if ([notesTableView respondsToSelector:@selector(nv_contrastFieldEditor:)])
+            [notesTableView nv_contrastFieldEditor:theFieldEditor];
     }
     
 }
@@ -3021,7 +3696,13 @@ terminateApp:
 #pragma mark control/opt key hold down to pop word count/preview window
     
     - (void)updateWordCount:(BOOL)doIt{
-        if (doIt) {            
+        if (doIt) {
+            /* -[NSTextStorage words] splits the whole note. A long note does this on every keystroke, including return. */
+            if (!NVMarkdownSyntaxHighlightEnabledForLength([[textView string] length])) {
+                [wordCounter setStringValue:@""];
+                [self updateWordCounterChrome];
+                return;
+            }
             NSUInteger theCount = [[[textView textStorage] words] count];
 
             if (theCount > 0) {
@@ -3029,6 +3710,7 @@ terminateApp:
             }else {
                 [wordCounter setStringValue:@""];
             }
+            [self updateWordCounterChrome];
         }
     }
     
@@ -3248,11 +3930,9 @@ terminateApp:
                 }
                 [theFieldEditor setDrawsBackground:NO];
                 // [theFieldEditor setBackgroundColor:backgrndColor];
-                if ([theFieldEditor textColor] != foregrndColor) {
-                    [theFieldEditor setTextColor:foregrndColor];
-                }
                 [theFieldEditor setSelectedTextAttributes:fieldAttributes];
-                [theFieldEditor setInsertionPointColor:foregrndColor];
+                if ([notesTableView respondsToSelector:@selector(nv_contrastFieldEditor:)])
+                    [notesTableView nv_contrastFieldEditor:theFieldEditor];
                 
                 // [notesTableView setNeedsDisplay:YES];
             }
@@ -3304,7 +3984,7 @@ terminateApp:
             ProcessSerialNumber psn = { 0, kCurrentProcess };
             OSStatus returnCode = TransformProcessType(&psn, kProcessTransformToForegroundApplication);
             if( returnCode != 0) {
-                NSLog(@"Could not bring the application to front. Error %d", returnCode);
+                NVLogWarning(@"Could not bring the application to front. Error %d", returnCode);
             }
 
         }else{
@@ -3323,7 +4003,7 @@ terminateApp:
             ProcessSerialNumber psn = { 0, kCurrentProcess };
             OSStatus returnCode = TransformProcessType(&psn, kProcessTransformToUIElementApplication);
             if( returnCode != 0) {
-                NSLog(@"Could not bring the application to front. Error %d", returnCode);
+                NVLogWarning(@"Could not bring the application to front. Error %d", returnCode);
             }
             if (!statusItem) {
                 [self setUpStatusBarItem];

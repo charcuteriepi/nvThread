@@ -36,6 +36,11 @@ typedef struct _NoteFilterContext {
 	BOOL useCachedPositions;
 } NoteFilterContext;
 
+typedef struct {
+	NSString *prefix;
+	const char *literal;
+} NVTagWordFilterContext;
+
 @interface NoteObject : NSObject <NSCoding, SynchronizedNote> {
 	NSAttributedString *tableTitleString;
 	NSMutableAttributedString *contentString;
@@ -70,6 +75,8 @@ typedef struct _NoteFilterContext {
 	
 	//more metadata
 	NSRange selectedRange;
+	//first character on the top line of the note body when it was last shown; NSNotFound until then
+	NSUInteger firstVisibleCharIndex;
 	
 	//each note has its own undo manager--isn't that nice?
 	NSUndoManager *undoManager;
@@ -142,6 +149,7 @@ NSInteger compareFileSize(id *a, id *b);
 
 	void resetFoundPtrsForNote(NoteObject *note);
 	BOOL noteContainsUTF8String(NoteObject *note, NoteFilterContext *context);
+	BOOL noteMatchesTagWord(NoteObject *note, NVTagWordFilterContext *context);
 	BOOL noteTitleHasPrefixOfUTF8String(NoteObject *note, const char* fullString, size_t stringLen);
 	BOOL noteTitleIsAPrefixOfOtherNoteTitle(NoteObject *longerNote, NoteObject *shorterNote);
 
@@ -223,6 +231,8 @@ NSInteger compareFileSize(id *a, id *b);
 - (void)setDateAdded:(CFAbsoluteTime)newTime;
 - (void)setSelectedRange:(NSRange)newRange;
 - (NSRange)lastSelectedRange;
+- (void)setFirstVisibleCharIndex:(NSUInteger)charIndex;
+- (NSUInteger)firstVisibleCharIndex;
 - (BOOL)contentsWere7Bit;
 - (void)addPrefixParentNote:(NoteObject*)aNote;
 - (void)removeAllPrefixParentNotes;

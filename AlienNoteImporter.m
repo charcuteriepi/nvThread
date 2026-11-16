@@ -29,6 +29,7 @@
 #import "NotationPrefs.h"
 #import "NotationController.h"
 #import "NoteObject.h"
+#import "nvALT-Swift.h"
 
 NSString *PasswordWasRetrievedFromKeychainKey = @"PasswordRetrievedFromKeychain";
 NSString *RetrievedPasswordKey = @"RetrievedPassword";
@@ -60,7 +61,7 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 		AlienNoteImporter *importer = [AlienNoteImporter importerWithPath:[AlienNoteImporter blorPath]];
 		NSArray *noteArray = [importer importedNotes];
 		if ([noteArray count] > 0) {
-			NSLog(@"importing BLOR");
+			NVLogInfo(@"importing BLOR");
 			NSData *passData = [[[importer documentSettings] objectForKey:RetrievedPasswordKey] dataUsingEncoding:NSUTF8StringEncoding];
 			BOOL shouldStoreInKeychain = [[[importer documentSettings] objectForKey:PasswordWasRetrievedFromKeychainKey] boolValue];
 			[prefs setPassphraseData:passData inKeychain:shouldStoreInKeychain];
@@ -89,7 +90,7 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 	NSDictionary *oldDict = [[NSUserDefaults standardUserDefaults] persistentDomainForName:@"com.scrod.notationalvelocity"];
 	NSString *blorPath = [oldDict objectForKey:@"DatabaseLocation"];
 	if (!blorPath) {
-		NSLog(@"Couldn't read old defaults--reverting to default location in prefs directory");
+		NVLogWarning(@"Couldn't read old defaults--reverting to default location in prefs directory");
 		blorPath = [NSString stringWithFormat:@"%@/Library/Preferences/%@", NSHomeDirectory(), @"NotationalDatabase.blor"];
 	}
 	return blorPath;
@@ -135,6 +136,8 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 - (void)dealloc {
 	[documentSettings release];
 	[source release];
+	[markdownBaseURL release];
+	[lastMarkdownTitle release];
 	
 	[super dealloc];
 }
@@ -144,12 +147,12 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 	if (PDFKitBundle == nil) {
 		NSString *PDFKitPath = @"/System/Library/Frameworks/Quartz.framework/Frameworks/PDFKit.framework";
 		if (![[NSFileManager defaultManager] fileExistsAtPath:PDFKitPath]) {
-			NSLog(@"Couldn't find PDFKit.framework");
+			NVLogError(@"Couldn't find PDFKit.framework");
 			return nil;
 		}
 		PDFKitBundle = [NSBundle bundleWithPath:PDFKitPath];
 		if (![PDFKitBundle load]) {
-			NSLog(@"Couldn't load PDFKit.framework");
+			NVLogError(@"Couldn't load PDFKit.framework");
 		}
 	}
 	return PDFKitBundle;
@@ -160,7 +163,7 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 	if (PDFDocClass == nil) {
 		PDFDocClass = [[self PDFKitBundle] classNamed:@"PDFDocument"];
 		if (PDFDocClass == nil) {
-			NSLog(@"Couldn't find PDFDocument class in PDFKit.framework");
+			NVLogError(@"Couldn't find PDFDocument class in PDFKit.framework");
 		}
 	}
 	return PDFDocClass;
@@ -173,7 +176,7 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 - (NSView*)accessoryView {
 	if (!importAccessoryView) {
 		if (![NSBundle loadNibNamed:@"ImporterAccessory" owner:self])  {
-			NSLog(@"Failed to load ImporterAccessory.nib");
+			NVLogError(@"Failed to load ImporterAccessory.nib");
 			NSBeep();
 			return nil;
 		}
@@ -243,7 +246,7 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
             }
         }];
     } else {
-        NSLog(@"Where's my note importing delegate?");
+        NVLogWarning(@"Where's my note importing delegate?");
         NSBeep();
     }
 }
@@ -254,6 +257,8 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 	if ([receptionDelegate respondsToSelector:@selector(noteImporter:importedNotes:)]) {
 
 		if (filename) {
+			[markdownBaseURL release];
+			markdownBaseURL = [[[getter url] absoluteString] copy];
 			NSArray *notes = [self notesInFile:filename];
 			if ([notes count]) {
 				NSMutableAttributedString *content = [[[GlobalPrefs defaultPrefs] pastePreservesStyle] ? [[[notes lastObject] contentString] mutableCopy] :
@@ -264,7 +269,10 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 					[content santizeForeignStylesForImporting];
 					
 					[[notes lastObject] setContentString:content];
-					if ([getter userData]) [[notes lastObject] setTitleString:[getter userData]];
+					if ([getter userData])
+						[[notes lastObject] setTitleString:[getter userData]];
+					else if ([lastMarkdownTitle length])
+						[[notes lastObject] setTitleString:lastMarkdownTitle];
 					
 					//prefixing should push existing selections forward:
 					NSRange selRange = [[notes lastObject] lastSelectedRange];
@@ -293,7 +301,7 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 		}			
 		
 	} else {
-		NSLog(@"Where's my note importing delegate?");
+		NVLogWarning(@"Where's my note importing delegate?");
 		NSBeep();
 	}
 	
@@ -305,6 +313,7 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 - (void)importURLInBackground:(NSURL*)aURL linkTitle:(NSString*)linkTitle receptionDelegate:(id)receiver {
 	
 	receptionDelegate = receiver;
+	focusesImportedNote = YES;
 		
 	[self retain];
 	
@@ -340,7 +349,7 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 		
 		return array;
 	} else {
-		NSLog(@"notesWithPaths: has the wrong kind of object!");
+		NVLogError(@"notesWithPaths: has the wrong kind of object!");
 	}
 	
 	return nil;
@@ -357,15 +366,15 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 	NSString *sourceIdentifierString = nil;
 	
 	NSMutableAttributedString *attributedStringFromData = nil;
+	[lastMarkdownTitle release];
+	lastMarkdownTitle = nil;
 
 	if (fileType == HTML_TYPE_ID || [extension isEqualToString:@"htm"] || [extension isEqualToString:@"html"] || [extension isEqualToString:@"shtml"]) {
 		//should convert to text with markdown here
         if ([[GlobalPrefs defaultPrefs] useMarkdownImport]) {
-			if ([[GlobalPrefs defaultPrefs] useReadability] || [self shouldUseReadability]) {
-				attributedStringFromData = [[NSMutableAttributedString alloc] initWithString:[self contentUsingReadability:filename] 
-																				  attributes:[[GlobalPrefs defaultPrefs] noteBodyAttributes]];
-			} else {
-				attributedStringFromData = [[NSMutableAttributedString alloc] initWithString:[self markdownFromHTMLFile:filename] 
+			NSString *markdown = [self markdownFromHTMLFile:filename readability:[self readabilityEnabled]];
+			if ([markdown length]) {
+				attributedStringFromData = [[NSMutableAttributedString alloc] initWithString:markdown
 																				  attributes:[[GlobalPrefs defaultPrefs] noteBodyAttributes]];
 			}
         } else {
@@ -406,17 +415,17 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 						attributedStringFromData = [[NSMutableAttributedString alloc] initWithAttributedString:[sel attributedString]];
 						//maybe we could check pages and boundsForPage: to try to determine where a line was soft-wrapped in the document?
 					} else {
-						NSLog(@"Couldn't get entire doc selection for PDF");
+						NVLogError(@"Couldn't get entire doc selection for PDF");
 					}
 					[doc autorelease];
 				} else {
-					NSLog(@"Couldn't parse data into PDF");
+					NVLogError(@"Couldn't parse data into PDF");
 				}
 			} else {
-				NSLog(@"No PDFDocument!");
+				NVLogError(@"No PDFDocument!");
 			}
 		} @catch (NSException *e) {
-			NSLog(@"Error importing PDF %@ (%@, %@)", filename, [e name], [e reason]);
+			NVLogError(@"Error importing PDF %@ (%@, %@)", filename, [e name], [e reason]);
 		}
 	} else if (fileType == TEXT_TYPE_ID || [extension isEqualToString:@"txt"] || [extension isEqualToString:@"text"] ||
 			   [filename UTIOfFileConformsToType:@"public.plain-text"]) {
@@ -472,7 +481,7 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 			
 			return [noteObject autorelease];
 		} else {
-			NSLog(@"couldn't generate note object from imported attributed string??");
+			NVLogError(@"couldn't generate note object from imported attributed string??");
 		}
 		
 	}
@@ -527,113 +536,46 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 	return nil;
 }
 
-- (NSString *) contentUsingReadability: (NSString *)htmlFile
-{
-    NSBundle *bundle = [NSBundle mainBundle];
-    NSString *readabilityPath = [bundle pathForResource:@"readability" ofType:@"py"];
-//    readabilityPath = [bundle pathForAuxiliaryExecutable: @"readability.py"];
-	
-    NSTask *task = [[NSTask alloc] init];
-    [task setLaunchPath: readabilityPath];
-	
-	NSArray *arguments;
-    arguments = [NSArray arrayWithObjects: htmlFile, nil];
-    [task setArguments: arguments];
-	
-	NSPipe *rpipe;
-    rpipe = [NSPipe pipe];
-    [task setStandardOutput: rpipe];
-	
-    NSFileHandle *file;
-    file = [rpipe fileHandleForReading];
-	
-    [task launch];
-	
-    NSData *data;
-    data = [file readDataToEndOfFile];
-	
-    NSString *string;
-    string = [[[NSString alloc] initWithData: data
-								   encoding: NSUTF8StringEncoding] autorelease];
-    [task release];
-	return [self markdownFromSource:string];
+- (NSString *)htmlStringFromFile:(NSString *)htmlFile {
+	NSData *data = [NSData dataWithContentsOfFile:htmlFile];
+	if (![data length])
+		return nil;
+	NSString *html = [[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] autorelease];
+	if (html)
+		return html;
+	html = [[[NSString alloc] initWithData:data encoding:NSUTF16StringEncoding] autorelease];
+	if (html)
+		return html;
+	return [[[NSString alloc] initWithData:data encoding:NSWindowsCP1252StringEncoding] autorelease];
 }
 
-- (NSString *) markdownFromHTMLFile: (NSString *)htmlFile
-{
-    NSBundle *bundle = [NSBundle mainBundle];
-    NSString *readabilityPath = [bundle pathForResource:@"html2text" ofType:@"py"];
-//    readabilityPath = [bundle pathForAuxiliaryExecutable: @"html2text.py"];
-	
-    NSTask *task = [[NSTask alloc] init];
-    [task setLaunchPath: readabilityPath];
-	
-	NSArray *arguments;
-    arguments = [NSArray arrayWithObjects: htmlFile, nil];
-    [task setArguments: arguments];
-	
-	NSPipe *rpipe;
-    rpipe = [NSPipe pipe];
-    [task setStandardOutput: rpipe];
-	
-    NSFileHandle *file;
-    file = [rpipe fileHandleForReading];
-	
-    [task launch];
-	
-    NSData *data;
-    data = [file readDataToEndOfFile];
-	
-    NSString *string;
-    string = [[[NSString alloc] initWithData: data
-								   encoding: NSUTF8StringEncoding] autorelease];
-	[task release];
-	return string;
+- (NSString *)markdownByConvertingHTML:(NSString *)htmlString readability:(BOOL)readability {
+	if (![htmlString length])
+		return @"";
+	NVMarkdownResult *result = [NVMarkdownifier resultFromHTML:htmlString sourceURL:markdownBaseURL readability:readability];
+	[lastMarkdownTitle release];
+	lastMarkdownTitle = [[result title] copy];
+	return [result markdown] ? [result markdown] : @"";
 }
 
-- (NSString *) markdownFromSource: (NSString *)htmlString
-{
-    NSBundle *bundle = [NSBundle mainBundle];
-    NSString *readabilityPath = [bundle pathForResource:@"html2text" ofType:@"py"];
-//    readabilityPath = [bundle pathForAuxiliaryExecutable: @"html2text.py"];
-
-	
-    NSTask *task = [[NSTask alloc] init];
-    [task setLaunchPath: readabilityPath];
-	
-    NSPipe *readPipe = [NSPipe pipe];
-    NSFileHandle *readHandle = [readPipe fileHandleForReading];
-	
-    NSPipe *writePipe = [NSPipe pipe];
-    NSFileHandle *writeHandle = [writePipe fileHandleForWriting];
-	
-    [task setStandardInput: writePipe];
-    [task setStandardOutput: readPipe];
-	
-    [task launch];
-	
-    [writeHandle writeData: [htmlString dataUsingEncoding: NSUTF8StringEncoding]];
-    [writeHandle closeFile];
-	
-    NSMutableData *data = [[NSMutableData alloc] init];
-    NSData *readData;
-	
-    while ((readData = [readHandle availableData])
-           && [readData length]) {
-        [data appendData: readData];
-    }
-	
-    NSString *strippedString;
-    strippedString = [[NSString alloc]
-					  initWithData: data
-					  encoding: NSUTF8StringEncoding];
-	
-    [task release];
-    [data release];
-    [strippedString autorelease];
-	
-    return (strippedString);
+- (NSString *)contentUsingReadability:(NSString *)htmlFile {
+	return [self markdownFromHTMLFile:htmlFile readability:YES];
 }
+
+- (NSString *)markdownFromHTMLFile:(NSString *)htmlFile readability:(BOOL)readability {
+	return [self markdownByConvertingHTML:[self htmlStringFromFile:htmlFile] readability:readability];
+}
+
+- (NSString *)markdownFromSource:(NSString *)htmlString {
+	return [self markdownByConvertingHTML:htmlString readability:NO];
+}
+
+- (BOOL)readabilityEnabled {
+	if (hasReadabilityOverride)
+		return readabilityOverrideValue;
+	return [[GlobalPrefs defaultPrefs] useReadability] || shouldUseReadability;
+}
+
 -(BOOL)shouldUseReadability
 {
     return shouldUseReadability;
@@ -642,6 +584,19 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 -(void) setShouldUseReadability:(BOOL)value
 {
 	shouldUseReadability = value;
+}
+
+- (void)setReadabilityOverride:(BOOL)value {
+	hasReadabilityOverride = YES;
+	readabilityOverrideValue = value;
+}
+
+- (BOOL)focusesImportedNote {
+	return focusesImportedNote;
+}
+
+- (NSString *)lastMarkdownTitle {
+	return lastMarkdownTitle;
 }
 
 @end
@@ -658,7 +613,7 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 		[unarchiver release];
 	NS_HANDLER
 		stickyNotes = nil;
-		NSLog(@"Error parsing stickies database: %@", [localException reason]);
+		NVLogError(@"Error parsing stickies database: %@", [localException reason]);
 	NS_ENDHANDLER
 	
 	if (stickyNotes && [stickyNotes isKindOfClass:[NSMutableArray class]]) {
@@ -681,10 +636,10 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 
 					[notes addObject:noteObject];
 				} else {
-					NSLog(@"couldn't generate note object from sticky note??");
+					NVLogError(@"couldn't generate note object from sticky note??");
 				}
 			} else {
-				NSLog(@"Sticky document is wrong: %@", [doc description]);
+				NVLogError(@"Sticky document is wrong: %@", [doc description]);
 			}
 		}
 		
@@ -692,7 +647,7 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 		
 		return notes;
 	} else {
-		NSLog(@"Sticky notes array is wrong: %@", [stickyNotes description]);
+		NVLogError(@"Sticky notes array is wrong: %@", [stickyNotes description]);
 	}
 	
 	return nil;
@@ -703,7 +658,7 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 	BlorPasswordRetriever *retriever = [[[BlorPasswordRetriever alloc] initWithBlor:filename] autorelease];
 	NSData *keyData = [retriever validPasswordHashData];
 	if (!keyData) {
-		NSLog(@"Couldn't get a valid pass-key to decrypt the blor!");
+		NVLogError(@"Couldn't get a valid pass-key to decrypt the blor!");
 		return nil;
 	}
 	
@@ -724,7 +679,7 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 	//iterate over notes with blorenumerator and return array
 	BlorNoteEnumerator *enumerator = [[BlorNoteEnumerator alloc] initWithBlor:filename passwordHashData:keyData];
 	if (!enumerator) {
-		NSLog(@"couldn't initialize blor note enumerator!");
+		NVLogError(@"couldn't initialize blor note enumerator!");
 		return nil;
 	}
 	NSMutableArray *array = [NSMutableArray array];
@@ -740,7 +695,7 @@ NSString *ShouldImportCreationDates = @"ShouldImportCreationDates";
 	}
 	
 	if (count != [enumerator suspectedNoteCount]) {
-		NSLog(@"read notes (%d) != stated note count (%d)!", count, [enumerator suspectedNoteCount]);
+		NVLogWarning(@"read notes (%d) != stated note count (%d)!", count, [enumerator suspectedNoteCount]);
 	}
 	
 	[enumerator release];

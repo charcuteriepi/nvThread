@@ -12,7 +12,7 @@
 @class AppController;
 @class NoteObject;
 
-@interface PreviewController : NSWindowController 
+@interface PreviewController : NSWindowController <NSSharingServicePickerDelegate, NSSharingServiceDelegate>
 {
   IBOutlet WebView *preview;
 	IBOutlet NSTextView *sourceView;
@@ -35,6 +35,10 @@
 	NSButton *shareCancel;
 	NSButton *shareConfirm;
 	NSString *shareURL;
+	NSButton *previewShareButton;
+	NSButton *editScrollButton;
+	NSString *shareHTML;
+	NSSharingServicePicker *previewSharePicker;
 	NSString *cssString;
 	NSString *htmlString;
 
@@ -43,6 +47,12 @@
 	IBOutlet NSView *accessoryView;
 	
 	NoteObject *lastNote;
+	NSString *pendingScrollState;
+	BOOL previewHasMathJax;
+	BOOL previewHasMermaid;
+	BOOL previewHasWiki;
+	BOOL previewHasHighlight;
+	BOOL previewNeedsFullReload;
 }
 
 @property (assign) BOOL isPreviewOutdated;
@@ -60,6 +70,8 @@
 -(IBAction)makePreviewSticky:(id)sender;
 -(IBAction)makePreviewNotSticky:(id)sender;
 -(IBAction)printPreview:(id)sender;
+-(IBAction)togglePreviewScrollsToEdit:(id)sender;
+-(void)scrollPreviewToEditIfSynced;
 -(BOOL)previewIsVisible;
 -(void)togglePreview:(id)sender;
 -(void)requestPreviewUpdate:(NSNotification *)notification;
@@ -72,4 +84,6 @@
 -(IBAction)openShareURL:(id)sender;
 +(NSString *)css;
 +(NSString *)html;
++(NSString *)themedHTMLDocumentForTitle:(NSString *)title contentHTML:(NSString *)contentHTML;
+-(void)themesDidChange:(NSNotification *)notification;
 @end

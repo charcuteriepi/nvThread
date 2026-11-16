@@ -33,6 +33,8 @@
 #import "PTHotKeyCenter.h"
 #import "NSString_NV.h"
 #import "AppController.h"
+#import "SearchHighlight.h"
+#import "NVThemeManager.h"
 
 #define SEND_CALLBACKS() sendCallbacksForGlobalPrefs(self, _cmd, sender)
 
@@ -49,10 +51,13 @@ static NSString *TableColumnsHaveBodyPreviewKey = @"TableColumnsHaveBodyPreview"
 static NSString *NoteBodyFontKey = @"NoteBodyFont";
 static NSString *NoteListFontKey = @"NoteListFont";
 static NSString *ConfirmNoteDeletionKey = @"ConfirmNoteDeletion";
+static NSString *LogErrorsAndWarningsKey = @"LogErrorsAndWarnings";
+static NSString *LogAllDiagnosticMessagesKey = @"LogAllDiagnosticMessages";
 static NSString *CheckSpellingInNoteBodyKey = @"CheckSpellingInNoteBody";
 static NSString *TextReplacementInNoteBodyKey = @"TextReplacementInNoteBody";
 static NSString *QuitWhenClosingMainWindowKey = @"QuitWhenClosingMainWindow";
 static NSString *TabKeyIndentsKey = @"TabKeyIndents";
+static NSString *EnterInListRenamesNoteKey = @"EnterInListRenamesNote";
 static NSString *PastePreservesStyleKey = @"PastePreservesStyle";
 static NSString *AutoFormatsDoneTagKey = @"AutoFormatsDoneTag";
 static NSString *AutoFormatsListBulletsKey = @"AutoFormatsListBullets";
@@ -70,6 +75,7 @@ static NSString *AppActivationModifiersKey = @"AppActivationModifiers";
 static NSString *HorizontalLayoutKey = @"HorizontalLayout";
 static NSString *BookmarksKey = @"Bookmarks";
 static NSString *LastScrollOffsetKey = @"LastScrollOffset";
+static NSString *LastNoteTopCharIndexKey = @"LastNoteTopCharIndex";
 static NSString *LastSearchStringKey = @"LastSearchString";
 static NSString *LastSelectedNoteUUIDBytesKey = @"LastSelectedNoteUUIDBytes";
 static NSString *LastSelectedPreferencesPaneKey = @"LastSelectedPrefsPane";
@@ -87,7 +93,9 @@ static NSString *RTLKey = @"rtl";
 static NSString *ShowWordCount = @"ShowWordCount";
 static NSString *markupPreviewMode = @"markupPreviewMode";
 static NSString *UseAutoPairing = @"UseAutoPairing";
-static NSString *UseETScrollbarsOnLion = @"UseETScrollbarsOnLion";
+static NSString *MarkdownBoldMarkerKey = @"MarkdownBoldMarker";
+static NSString *MarkdownItalicMarkerKey = @"MarkdownItalicMarker";
+static NSString *MarkdownListMarkerKey = @"MarkdownListMarker";
 static NSString *UsesMarkdownCompletions = @"UsesMarkdownCompletions";
 static NSString *UseFinderTagsKey = @"UseFinderTags";
 static NSString *UseSmartInsertDeleteKey = @"UseSmartInsertDelete";
@@ -137,7 +145,10 @@ static void sendCallbacksForGlobalPrefs(GlobalPrefs* self, SEL selector, id orig
 			[NSNumber numberWithInteger:4], NumberOfSpacesInTabKey,
 			[NSNumber numberWithBool:YES], PastePreservesStyleKey,
 			[NSNumber numberWithBool:YES], TabKeyIndentsKey,
+			[NSNumber numberWithBool:YES], EnterInListRenamesNoteKey,
 			[NSNumber numberWithBool:YES], ConfirmNoteDeletionKey,
+			[NSNumber numberWithBool:YES], LogErrorsAndWarningsKey,
+			[NSNumber numberWithBool:NO], LogAllDiagnosticMessagesKey,
 			[NSNumber numberWithBool:YES], CheckSpellingInNoteBodyKey, 
             [NSNumber numberWithBool:NO], TextReplacementInNoteBodyKey,
             [NSNumber numberWithBool:NO], UseSmartInsertDeleteKey,
@@ -163,7 +174,9 @@ static void sendCallbacksForGlobalPrefs(GlobalPrefs* self, SEL selector, id orig
             [NSNumber numberWithBool:YES], ShowGridKey,
             [NSNumber numberWithBool:NO], AlternatingRowsKey,
             [NSNumber numberWithBool:NO], UseAutoPairing,
-            [NSNumber numberWithBool:NO], UseETScrollbarsOnLion,
+            @"*", MarkdownBoldMarkerKey,
+            @"*", MarkdownItalicMarkerKey,
+            @"*", MarkdownListMarkerKey,
             [NSNumber numberWithBool:YES], UsesMarkdownCompletions,
 
 			[NSArchiver archivedDataWithRootObject:
@@ -181,6 +194,8 @@ static void sendCallbacksForGlobalPrefs(GlobalPrefs* self, SEL selector, id orig
 			[NSNumber numberWithBool:YES], TableIsReverseSortedKey, nil]];
 		
 		autoCompleteSearches = [defaults boolForKey:AutoCompleteSearchesKey];
+		//the logging module starts out writing errors and warnings; the saved settings take over here
+		NVLogSetEnabled([defaults boolForKey:LogErrorsAndWarningsKey], [defaults boolForKey:LogAllDiagnosticMessagesKey]);
 		[self _upgradeLegacyFontSizesIfNeeded];
 	}
 	return self;
@@ -272,7 +287,7 @@ static void sendCallbacksForGlobalPrefs(GlobalPrefs* self, SEL selector, id orig
 		va_end(argList);
 		
 	} else {
-		NSLog(@"%@: target %@ does not respond to callback selector!", NSStringFromSelector(_cmd), [sender description]);
+		NVLogError(@"%@: target %@ does not respond to callback selector!", NSStringFromSelector(_cmd), [sender description]);
 	}
 }
 
@@ -290,7 +305,7 @@ static void sendCallbacksForGlobalPrefs(GlobalPrefs* self, SEL selector, id orig
 		if (![senders count])
 			[selectorObservers removeObjectForKey:selectorKey];
 	} else {
-		NSLog(@"Selector %@ has no observers?", NSStringFromSelector(selector));
+		NVLogWarning(@"Selector %@ has no observers?", NSStringFromSelector(selector));
 	}
 }
 
@@ -371,6 +386,32 @@ static void sendCallbacksForGlobalPrefs(GlobalPrefs* self, SEL selector, id orig
 }
 - (BOOL)confirmNoteDeletion {
     return [defaults boolForKey:ConfirmNoteDeletionKey];
+}
+
+- (void)setLogsErrorsAndWarnings:(BOOL)value sender:(id)sender {
+	[defaults setBool:value forKey:LogErrorsAndWarningsKey];
+	NVLogSetEnabled(value, [defaults boolForKey:LogAllDiagnosticMessagesKey]);
+
+	SEND_CALLBACKS();
+}
+
+- (BOOL)logsErrorsAndWarnings {
+	return [defaults boolForKey:LogErrorsAndWarningsKey];
+}
+
+//every diagnostic message includes the errors and warnings, so turning this on
+//also records that setting; turning it off again leaves errors and warnings on
+- (void)setLogsAllDiagnosticMessages:(BOOL)value sender:(id)sender {
+	[defaults setBool:value forKey:LogAllDiagnosticMessagesKey];
+	if (value)
+		[defaults setBool:YES forKey:LogErrorsAndWarningsKey];
+	NVLogSetEnabled([defaults boolForKey:LogErrorsAndWarningsKey], value);
+
+	SEND_CALLBACKS();
+}
+
+- (BOOL)logsAllDiagnosticMessages {
+	return [defaults boolForKey:LogAllDiagnosticMessagesKey];
 }
 
 - (void)setQuitWhenClosingWindow:(BOOL)value sender:(id)sender {
@@ -497,16 +538,6 @@ static void sendCallbacksForGlobalPrefs(GlobalPrefs* self, SEL selector, id orig
 	[defaults setBool:value forKey:ShowWordCount];
 }
 
-- (void)setUseETScrollbarsOnLion:(BOOL)value sender:(id)sender{
-	[defaults setBool:value forKey:UseETScrollbarsOnLion];
-	SEND_CALLBACKS();
-}
-
-- (BOOL)useETScrollbarsOnLion{
-	return [defaults boolForKey:UseETScrollbarsOnLion];
-}
-
-
 - (void)setUseMarkdownImport:(BOOL)value sender:(id)sender {
 	[defaults setBool:value forKey:UseMarkdownImportKey];
 	
@@ -549,6 +580,43 @@ static void sendCallbacksForGlobalPrefs(GlobalPrefs* self, SEL selector, id orig
 	return [defaults boolForKey:UseAutoPairing];
 }
 
+static NSString *NVAllowedMarker(NSString *stored, NSString *allowed, NSString *fallback) {
+	if ([stored length] == 1 && [allowed rangeOfString:stored].location != NSNotFound)
+		return stored;
+	return fallback;
+}
+
+- (void)setMarkdownBoldMarker:(NSString *)marker {
+	NSString *chosen = NVAllowedMarker(marker, @"*_", nil);
+	if (chosen)
+		[defaults setObject:chosen forKey:MarkdownBoldMarkerKey];
+}
+
+- (NSString *)markdownBoldMarker {
+	NSString *chosen = NVAllowedMarker([defaults stringForKey:MarkdownBoldMarkerKey], @"*_", @"*");
+	return [chosen stringByAppendingString:chosen];
+}
+
+- (void)setMarkdownItalicMarker:(NSString *)marker {
+	NSString *chosen = NVAllowedMarker(marker, @"*_", nil);
+	if (chosen)
+		[defaults setObject:chosen forKey:MarkdownItalicMarkerKey];
+}
+
+- (NSString *)markdownItalicMarker {
+	return NVAllowedMarker([defaults stringForKey:MarkdownItalicMarkerKey], @"*_", @"*");
+}
+
+- (void)setMarkdownListMarker:(NSString *)marker {
+	NSString *chosen = NVAllowedMarker(marker, @"-*+", nil);
+	if (chosen)
+		[defaults setObject:chosen forKey:MarkdownListMarkerKey];
+}
+
+- (NSString *)markdownListMarker {
+	return NVAllowedMarker([defaults stringForKey:MarkdownListMarkerKey], @"-*+", @"*");
+}
+
 - (void)setShouldHighlightSearchTerms:(BOOL)shouldHighlight sender:(id)sender {
 	[defaults setBool:shouldHighlight forKey:HighlightSearchTermsKey];
 	
@@ -570,6 +638,23 @@ static void sendCallbacksForGlobalPrefs(GlobalPrefs* self, SEL selector, id orig
 	}
 }
 
+static BOOL NVColorComponents(NSColor *color, CGFloat *red, CGFloat *green, CGFloat *blue, CGFloat *alpha) {
+	NSColor *rgb = [color colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+	if (!rgb)
+		rgb = [color colorUsingColorSpace:[NSColorSpace genericRGBColorSpace]];
+	if (!rgb)
+		return NO;
+	[rgb getRed:red green:green blue:blue alpha:alpha];
+	return YES;
+}
+
+- (NSColor *)nv_searchHighlightBackdrop {
+	NSColor *background = [[[NVThemeManager sharedManager] currentEditorTheme] editorBackgroundColor];
+	if (!background)
+		background = [self backgroundTextColor];
+	return background;
+}
+
 - (NSColor*)searchTermHighlightColorRaw:(BOOL)isRaw {
 	
 	NSData *theData = [defaults dataForKey:SearchTermHighlightColorKey];
@@ -577,9 +662,19 @@ static void sendCallbacksForGlobalPrefs(GlobalPrefs* self, SEL selector, id orig
 		NSColor *color = (NSColor *)[NSUnarchiver unarchiveObjectWithData:theData];
 		if (isRaw) return color;
 		if (color) {
-			//nslayoutmanager temporary attributes don't seem to like alpha components, so synthesize translucency using the bg color
-			NSColor *fauxAlphaSTHC = [[color colorUsingColorSpaceName:NSCalibratedRGBColorSpace] colorWithAlphaComponent:1.0];
-			return [fauxAlphaSTHC blendedColorWithFraction:(1.0 - [color alphaComponent]) ofColor:[self backgroundTextColor]];
+			CGFloat highlightRed, highlightGreen, highlightBlue, highlightAlpha;
+			if (!NVColorComponents(color, &highlightRed, &highlightGreen, &highlightBlue, &highlightAlpha))
+				return color;
+			CGFloat backgroundRed = highlightRed, backgroundGreen = highlightGreen, backgroundBlue = highlightBlue;
+			CGFloat unusedAlpha = 1;
+			NSColor *backdrop = [self nv_searchHighlightBackdrop];
+			if (backdrop)
+				NVColorComponents(backdrop, &backgroundRed, &backgroundGreen, &backgroundBlue, &unusedAlpha);
+			CGFloat paintedRed, paintedGreen, paintedBlue;
+			NVSearchHighlightPaint(highlightRed, highlightGreen, highlightBlue, highlightAlpha,
+								   backgroundRed, backgroundGreen, backgroundBlue,
+								   &paintedRed, &paintedGreen, &paintedBlue, NULL);
+			return [NSColor colorWithSRGBRed:paintedRed green:paintedGreen blue:paintedBlue alpha:1.0];
 		}
 	}
 
@@ -587,13 +682,23 @@ static void sendCallbacksForGlobalPrefs(GlobalPrefs* self, SEL selector, id orig
 }
 
 - (NSDictionary*)searchTermHighlightAttributes {
-	NSColor *highlightColor = nil;
-	
-	if (!searchTermHighlightAttributes && (highlightColor = [self searchTermHighlightColorRaw:NO])) {
-		searchTermHighlightAttributes = [[NSDictionary dictionaryWithObjectsAndKeys:highlightColor, NSBackgroundColorAttributeName, nil] retain];
+	NSColor *highlightColor = [self searchTermHighlightColorRaw:NO];
+	[searchTermHighlightAttributes release];
+	searchTermHighlightAttributes = nil;
+	if (highlightColor) {
+		NSColor *rgb = [highlightColor colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+		CGFloat red = 0, green = 0, blue = 0, alpha = 0;
+		NSColor *ink = [NSColor colorWithSRGBRed:0 green:0 blue:0 alpha:1];
+		if (rgb) {
+			[rgb getRed:&red green:&green blue:&blue alpha:&alpha];
+			if (NVSearchHighlightLuminance(red, green, blue) <= 0.55)
+				ink = [NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:1];
+		}
+		searchTermHighlightAttributes = [[NSDictionary dictionaryWithObjectsAndKeys:
+										  highlightColor, NSBackgroundColorAttributeName,
+										  ink, NSForegroundColorAttributeName, nil] retain];
 	}
 	return searchTermHighlightAttributes;
-	
 }
 
 - (void)setUseFinderTags:(id)sender {
@@ -611,6 +716,14 @@ static void sendCallbacksForGlobalPrefs(GlobalPrefs* self, SEL selector, id orig
         return NO;
     }
 	return [defaults boolForKey:UseFinderTagsKey];
+}
+
+- (void)setEnterInListRenamesNote:(BOOL)value sender:(id)sender {
+	[defaults setBool:value forKey:EnterInListRenamesNoteKey];
+}
+
+- (BOOL)enterInListRenamesNote {
+	return [defaults boolForKey:EnterInListRenamesNoteKey];
 }
 
 - (void)setSoftTabs:(BOOL)value sender:(id)sender {
@@ -662,7 +775,7 @@ BOOL ColorsEqualWith8BitChannels(NSColor *c1, NSColor *c2) {
 		if (![[prefsFont fontName] isEqualToString:[noteFont fontName]] || 
 			[prefsFont pointSize] != [noteFont pointSize]) {
 			
-			NSLog(@"archived notationPrefs base font does not match current global default font!");
+			NVLogWarning(@"archived notationPrefs base font does not match current global default font!");
 			[self _setNoteBodyFont:prefsFont];
 			
 			SEND_CALLBACKS();
@@ -711,7 +824,7 @@ BOOL ColorsEqualWith8BitChannels(NSColor *c1, NSColor *c2) {
 		@try {
 			noteBodyFont = [[NSUnarchiver unarchiveObjectWithData:[defaults objectForKey:NoteBodyFontKey]] retain];
 		} @catch (NSException *e) {
-			NSLog(@"Error trying to unarchive default note body font (%@, %@)", [e name], [e reason]);
+			NVLogError(@"Error trying to unarchive default note body font (%@, %@)", [e name], [e reason]);
 		}
 		
 		if ((!noteBodyFont || ![noteBodyFont isKindOfClass:[NSFont class]]) && !triedOnce) {
@@ -866,7 +979,7 @@ BOOL ColorsEqualWith8BitChannels(NSColor *c1, NSColor *c2) {
 		@try {
 			noteListFont = [[NSUnarchiver unarchiveObjectWithData:stored] retain];
 		} @catch (NSException *exception) {
-			NSLog(@"Error trying to unarchive note list font (%@, %@)", [exception name], [exception reason]);
+			NVLogError(@"Error trying to unarchive note list font (%@, %@)", [exception name], [exception reason]);
 		}
 	}
 	BOOL replaceAvenirDefault = [GlobalPrefs fontIsUnreleasedAvenirListDefault:noteListFont];
@@ -1023,6 +1136,19 @@ BOOL ColorsEqualWith8BitChannels(NSColor *c1, NSColor *c2) {
 
 - (double)scrollOffsetOfLastSelectedNote {
 	return [defaults doubleForKey:LastScrollOffsetKey];
+}
+
+- (void)setTopCharIndexOfLastSelectedNote:(NSUInteger)charIndex {
+	//the first character on the top line of the note body at quit, so the view comes back exactly
+	if (charIndex == NSNotFound)
+		[defaults removeObjectForKey:LastNoteTopCharIndexKey];
+	else
+		[defaults setObject:[NSNumber numberWithUnsignedLongLong:charIndex] forKey:LastNoteTopCharIndexKey];
+}
+
+- (NSUInteger)topCharIndexOfLastSelectedNote {
+	NSNumber *number = [defaults objectForKey:LastNoteTopCharIndexKey];
+	return [number isKindOfClass:[NSNumber class]] ? (NSUInteger)[number unsignedLongLongValue] : NSNotFound;
 }
 
 - (void)saveCurrentBookmarksFromSender:(id)sender {

@@ -20,9 +20,11 @@
 #import "NSCollection_utils.h"
 #import "GlobalPrefs.h"
 #import "NSString_NV.h"
+#import "TaskList.h"
 
 
 NSString *NVHiddenDoneTagAttributeName = @"NVDoneTag";
+NSString *NVHiddenTaskDoneAttributeName = @"NVTaskDone";
 NSString *NVHiddenBulletIndentAttributeName = @"NVBulletIndentTag";
 
 static BOOL _StringWithRangeIsProbablyObjC(NSString *string, NSRange blockRange);
@@ -70,7 +72,7 @@ static BOOL _StringWithRangeIsProbablyObjC(NSString *string, NSRange blockRange)
 			}
 		}
 	} @catch (NSException *e) {
-		NSLog(@"indentTextLists: %@", e);
+		NVLogInfo(@"indentTextLists: %@", e);
 	}
 }
 
@@ -194,7 +196,7 @@ static BOOL _StringWithRangeIsProbablyObjC(NSString *string, NSRange blockRange)
 		}
 	}	
 	@catch (NSException *e) {
-		NSLog(@"Error trying to re-style text (%@, %@)", [e name], [e reason]);
+		NVLogError(@"Error trying to re-style text (%@, %@)", [e name], [e reason]);
 	}
 		
 	return rangesChanged > 0;
@@ -216,7 +218,7 @@ static BOOL _StringWithRangeIsProbablyObjC(NSString *string, NSRange blockRange)
 		NSError *error = nil;
 		detector = [[NSDataDetector alloc] initWithTypes:NSTextCheckingTypeLink error:&error];
 		if (!detector)
-			NSLog(@"Could not create link detector: %@", error);
+			NVLogError(@"Could not create link detector: %@", error);
 	});
 	if (!detector)
 		return;
@@ -308,6 +310,43 @@ static BOOL _StringWithRangeIsProbablyObjC(NSString *string, NSRange blockRange)
 	//this is left as an exercise to the anal-retentive reader
 }
 
+- (void)nv_applyCompletedTaskStrikethroughForRange:(NSRange)changedRange {
+	NSString *string = [self string];
+	if (changedRange.location > [string length])
+		return;
+	NSUInteger end = MIN(NSMaxRange(changedRange), [string length]);
+	if (end < changedRange.location)
+		return;
+	NSRange span = end > changedRange.location ? [string lineRangeForRange:NSMakeRange(changedRange.location, end - changedRange.location)] : [string lineRangeForRange:NSMakeRange(changedRange.location, 0)];
+	NSUInteger scan = span.location;
+	while (scan <= NSMaxRange(span) && scan <= [string length]) {
+		NSRange lineRange = [string lineRangeForRange:NSMakeRange(MIN(scan, [string length]), 0)];
+		if (NSMaxRange(lineRange) < lineRange.location)
+			break;
+		NSString *line = [string substringWithRange:lineRange];
+		NSRange struck = NVTaskDoneStrikethroughRange(line);
+		NSRange prefix = NVTaskCheckedPrefixRange(line);
+		BOOL hadTask = [self attribute:NVHiddenTaskDoneAttributeName existsInRange:lineRange];
+		if (struck.location != NSNotFound) {
+			if (prefix.location != NSNotFound)
+				[self removeAttribute:NSStrikethroughStyleAttributeName range:NSMakeRange(lineRange.location + prefix.location, prefix.length)];
+			[self removeAttribute:NVHiddenTaskDoneAttributeName range:lineRange];
+			[self addAttributes:[NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:NSUnderlineStyleSingle],
+								 NSStrikethroughStyleAttributeName, [NSNull null], NVHiddenTaskDoneAttributeName, nil]
+						  range:NSMakeRange(lineRange.location + struck.location, struck.length)];
+		} else if (hadTask) {
+			[self removeAttribute:NVHiddenTaskDoneAttributeName range:lineRange];
+			if ([line rangeOfString:@" @done"].location == NSNotFound)
+				[self removeAttribute:NSStrikethroughStyleAttributeName range:lineRange];
+		}
+		if (NSMaxRange(lineRange) <= scan)
+			break;
+		scan = NSMaxRange(lineRange);
+		if (scan >= NSMaxRange(span) && lineRange.location >= span.location && NSMaxRange(lineRange) >= NSMaxRange(span))
+			break;
+	}
+}
+
 - (void)addStrikethroughNearDoneTagsForRange:(NSRange)changedRange {
 	//scan line by line
 	//if the line ends in " @done", then strikethrough everything prior and add NVHiddenDoneTagAttributeName
@@ -315,8 +354,7 @@ static BOOL _StringWithRangeIsProbablyObjC(NSString *string, NSRange blockRange)
 	//  then remove both attributes
 	//all other NSStrikethroughStyleAttributeName by itself will be ignored
 	
-	if (![[GlobalPrefs defaultPrefs] autoFormatsDoneTag])
-		return;
+	if ([[GlobalPrefs defaultPrefs] autoFormatsDoneTag]) {
 		
 	NSString *doneTag = @" @done";
 	NSCharacterSet *newlineSet = [NSCharacterSet newlineCharacterSet];
@@ -359,8 +397,10 @@ static BOOL _StringWithRangeIsProbablyObjC(NSString *string, NSRange blockRange)
 		} while (NSMaxRange(scanRange) <= NSMaxRange(changedRange));
 	}
 	@catch (NSException *e) {
-		NSLog(@"_%@(%@): %@", NSStringFromSelector(_cmd), NSStringFromRange(changedRange), e);
+		NVLogError(@"_%@(%@): %@", NSStringFromSelector(_cmd), NSStringFromRange(changedRange), e);
 	}
+	}
+	[self nv_applyCompletedTaskStrikethroughForRange:changedRange];
 }
 
 
@@ -392,7 +432,7 @@ static BOOL _StringWithRangeIsProbablyObjC(NSString *string, NSRange blockRange)
 			}
 		}
 		NS_HANDLER
-			NSLog(@"Error setting attributes for string. %@: %@", [localException name], [localException reason]);
+			NVLogError(@"Error setting attributes for string. %@: %@", [localException name], [localException reason]);
 		NS_ENDHANDLER
 		
 		if (keys != keysBuffer)
@@ -400,7 +440,7 @@ static BOOL _StringWithRangeIsProbablyObjC(NSString *string, NSRange blockRange)
 		if (values != valuesBuffer)
 			free(values);
 	} else {
-		NSLog(@"Could not get values or keys! Not applying any attributes.");
+		NVLogError(@"Could not get values or keys! Not applying any attributes.");
 	}
 	
 	return [attributedString autorelease];
@@ -473,7 +513,7 @@ static BOOL _StringWithRangeIsProbablyObjC(NSString *string, NSRange blockRange)
 			[allAttributes setObject:attributes forKey:[NSValue valueWithRange:effectiveRange]];
 		}
 		NS_HANDLER
-			NSLog(@"Error getting attributes: %@", [localException reason]);
+			NVLogError(@"Error getting attributes: %@", [localException reason]);
 		NS_ENDHANDLER
 		
 		return allAttributes;
