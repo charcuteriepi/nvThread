@@ -289,6 +289,14 @@ void NVScrollRangeIntoView(NSTextView *textView, NSRange range) {
 	[scroll reflectScrolledClipView:clip];
 }
 
+NSRange NVSelectionForShownNote(NSRange savedSelection, NSUInteger noteLength, NSRange shownMatch) {
+	if (savedSelection.location != NSNotFound && NSMaxRange(savedSelection) <= noteLength)
+		return savedSelection;
+	if (shownMatch.location != NSNotFound && NSMaxRange(shownMatch) <= noteLength)
+		return shownMatch;
+	return NSMakeRange(0, 0);
+}
+
 NSRange NVScrollToShowNearestRange(NSTextView *textView, NSArray *ranges) {
 	NSLayoutManager *layout = [textView layoutManager];
 	NSClipView *clip = [[textView enclosingScrollView] contentView];

@@ -1965,13 +1965,9 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
 	//actually load the new note
 	[self _setCurrentNote:note];
 	
-	NSRange noteSelectionRange = [currentNote lastSelectedRange];
-	
-	if (noteSelectionRange.location == NSNotFound ||
-		NSMaxRange(noteSelectionRange) > [[note contentString] length]) {
-		//revert to the top; selection is invalid
-		noteSelectionRange = NSMakeRange(0,0);
-	}
+	NSRange savedSelectionRange = [currentNote lastSelectedRange];
+	NSUInteger noteLength = [[note contentString] length];
+	NSRange noteSelectionRange = NVSelectionForShownNote(savedSelectionRange, noteLength, NSMakeRange(NSNotFound, 0));
 	
 	//[textView beginInhibitingUpdates];
 	//scroll to the top first in the old note body if necessary, because the text will (or really ought to) have already been laid-out
@@ -2002,14 +1998,14 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
 		foundRanges = nil;
 	
 	//scroll, then select: the note comes back to the line it was left at (or to its selection when it has
-	//none), then, while a search is on, moves the least distance that shows the nearest match. A bare caret
-	//goes on that match, the one on screen. The selection is set last and without moving the view, so the
-	//saved position is what stays on screen.
+	//none), then, while a search is on, moves the least distance that shows the nearest match. The caret
+	//comes back where the note was left, a bare caret included; only a note with no saved selection gets
+	//the match on screen. The selection is set last and without moving the view, so the saved position is
+	//what stays on screen.
 	if (!NVScrollCharIndexToTop(textView, [note firstVisibleCharIndex]))
 		NVScrollRangeIntoView(textView, noteSelectionRange);
 	NSRange shownMatch = NVScrollToShowNearestRange(textView, foundRanges);
-	if (!noteSelectionRange.length && shownMatch.location != NSNotFound)
-		noteSelectionRange = shownMatch;
+	noteSelectionRange = NVSelectionForShownNote(savedSelectionRange, noteLength, shownMatch);
 	NVRevealNoteTextIfScrolledPastIt(textView);
 	[textView setAutomaticallySelectedRange:noteSelectionRange];
 	[textView markScrollPositionAutomatic];

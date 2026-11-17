@@ -32,6 +32,12 @@ void NVScrollRangeIntoView(NSTextView *textView, NSRange range);
    range at NSNotFound when there is none. */
 NSRange NVScrollToShowNearestRange(NSTextView *textView, NSArray *ranges);
 
+/* The selection a note is shown with. The selection the note was left with
+   always comes back, a bare caret included, so a search never moves it. Only
+   a note with no usable saved selection (never visited, or one that no longer
+   fits the text) gets the search match on screen, or the top of the note. */
+NSRange NVSelectionForShownNote(NSRange savedSelection, NSUInteger noteLength, NSRange shownMatch);
+
 /* The text view keeps the height of the tallest note it has shown, and
    background layout is off. A shorter note can be left above the clip.
    Bring it back when the visible area misses the text entirely. */
